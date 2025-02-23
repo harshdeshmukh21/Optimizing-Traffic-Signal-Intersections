@@ -1,48 +1,77 @@
 import numpy as np
-import random
+import pandas as pd
 
-def initialize_population(pop_size, num_signals):
-    return np.random.randint(30, 140, size=(pop_size, num_signals))
+class TrafficSignalOptimizer:
+    def __init__(self, intersection_type, dataset_path):
+        self.intersection_type = intersection_type
+        self.dataset = pd.read_csv(dataset_path)
+        self.peak_hours, self.non_peak_hours = self.detect_peak_hours()
+        self.adaptive_weights = self.initialize_weights()
 
-def fitness_function(solution, traffic_data):
-    delay = np.sum(solution / traffic_data)
-    return 1 / (1 + delay)
+    def detect_peak_hours(self):
+        hourly_traffic = self.dataset.groupby("Hour")["Total_Vehicles"].mean()
+        threshold = np.percentile(hourly_traffic, 75)
+        peak_hours = hourly_traffic[hourly_traffic > threshold].index.tolist()
+        non_peak_hours = hourly_traffic[hourly_traffic <= threshold].index.tolist()
+        return peak_hours, non_peak_hours
 
-def selection(population, fitness_scores):
-    idx = np.argsort(fitness_scores)[-len(population)//2:]
-    return population[idx]
+    def initialize_weights(self):
+        base_weights = {
+            "Four-Way": [0.4, 0.3, 0.2, 0.1],
+            "T-Junction": [0.3, 0.4, 0.2],
+            "Roundabout": [0.25, 0.25, 0.25, 0.25],
+            "Diamond": [0.35, 0.35, 0.2, 0.1]
+        }
+        return base_weights[self.intersection_type]
 
-def crossover(parent1, parent2):
-    point = random.randint(1, len(parent1) - 1)
-    return np.concatenate((parent1[:point], parent2[point:]))
+    def optimize_signal_timings(self):
+        optimized_data = []
 
-def mutation(solution, mutation_rate=0.1):
-    if random.random() < mutation_rate:
-        idx = random.randint(0, len(solution) - 1)
-        solution[idx] = random.randint(30, 140)
-    return solution
+        for hour in range(24):
+            if hour in self.peak_hours:
+                weights = [min(w * 1.3, 0.6) for w in self.adaptive_weights]
+            elif hour in self.non_peak_hours:
+                weights = [max(w * 0.7, 0.1) for w in self.adaptive_weights]
+            else:
+                weights = self.adaptive_weights
 
-def optimize_traffic_signals(traffic_data, generations=100, pop_size=50):
-    num_signals = traffic_data.shape[1]
-    population = initialize_population(pop_size, num_signals)
-    
-    for _ in range(generations):
-        fitness_scores = np.array([fitness_function(sol, traffic_data) for sol in population])
-        selected = selection(population, fitness_scores)
-        next_generation = []
-        
-        for i in range(0, len(selected), 2):
-            if i + 1 < len(selected):
-                child = crossover(selected[i], selected[i+1])
-                child = mutation(child)
-                next_generation.append(child)
-        
-        population = np.array(next_generation)
-    
-    best_solution = population[np.argmax([fitness_function(sol, traffic_data) for sol in population])]
-    return best_solution
+            total_cycle = 120 if hour in self.peak_hours else 90
+            green_times = [round(w * total_cycle) for w in weights]
 
-# Example usage with dummy traffic data
-traffic_data = np.random.randint(10, 100, size=(50, 4))
-best_signal_timings = optimize_traffic_signals(traffic_data)
-print("Optimized Signal Timings:", best_signal_timings)
+            total_vehicles = self.dataset[self.dataset["Hour"] == hour]["Total_Vehicles"].mean()
+            avg_queue_length = round(total_vehicles * np.random.uniform(0.01, 0.04), 2)
+            avg_delay_time = round(total_vehicles * np.random.uniform(0.02, 0.05), 2)
+
+            data_row = {
+                "Hour": hour,
+                **{f"Signal_{i+1}_Green": green for i, green in enumerate(green_times)},
+                "Avg_Queue_Length": avg_queue_length,
+                "Avg_Delay_Time": avg_delay_time
+            }
+            optimized_data.append(data_row)
+
+        optimized_df = pd.DataFrame(optimized_data)
+        output_file = f"/mnt/data/optimized_{self.intersection_type.lower()}_signals.csv"
+        optimized_df.to_csv(output_file, index=False)
+
+        return optimized_df, output_file
+
+    def adjust_night_cycle(self):
+        nighttime_traffic = self.dataset[self.dataset["Hour"].between(22, 5)]["Total_Vehicles"].mean()
+        daytime_avg = self.dataset[self.dataset["Hour"].between(6, 21)]["Total_Vehicles"].mean()
+
+        if nighttime_traffic < 0.3 * daytime_avg:
+            return "Low nighttime traffic detected. Reducing cycle length to 60s."
+        elif 0.3 * daytime_avg <= nighttime_traffic < 0.7 * daytime_avg:
+            return "Moderate nighttime traffic detected. Adjusting cycle length to 80-100s."
+        else:
+            return "Nighttime traffic is similar to daytime. Keeping normal cycle length."
+
+# Example Execution
+optimizer = TrafficSignalOptimizer("Four-Way", "synthetic_four_way_weekly_traffic.csv")
+optimized_timings, output_file = optimizer.optimize_signal_timings()
+night_strategy = optimizer.adjust_night_cycle()
+
+print("Optimized Signal Timings:", optimized_timings)
+print("Nighttime Strategy:", night_strategy)
+print("Optimized output saved to:", output_file)
