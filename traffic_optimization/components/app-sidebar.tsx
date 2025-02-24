@@ -42,11 +42,6 @@ const data = {
           url: "/",
         },
         {
-          title: "Get CSV",
-          url: "#",
-          isActive: false,
-        },
-        {
           title: "Optimize",
           url: "/optimize",
         },
