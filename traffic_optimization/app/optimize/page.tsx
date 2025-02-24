@@ -28,20 +28,16 @@ const page = () => {
             <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink href="#">
-                    Building Your Application
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
+                <BreadcrumbItem className="hidden md:block"></BreadcrumbItem>
+                {/* <BreadcrumbSeparator className="hidden md:block" /> */}
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Data Fetching</BreadcrumbPage>
+                  <BreadcrumbPage>Optimize</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </header>
           <div className="flex items-center justify-center h-full">
-            <FileUpload/>
+            <FileUpload />
           </div>
         </SidebarInset>
       </SidebarProvider>
