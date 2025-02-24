@@ -41,7 +41,7 @@ const page = () => {
             </Breadcrumb>
           </header>
           <div className="flex items-center justify-center h-full">
-            <FileUpload></FileUpload>
+            <FileUpload/>
           </div>
         </SidebarInset>
       </SidebarProvider>

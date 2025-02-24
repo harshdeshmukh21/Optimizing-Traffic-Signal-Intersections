@@ -1,10 +1,16 @@
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import numpy as np
 import pandas as pd
+import os
+
+app = Flask(__name__)
+CORS(app)  # Add this line to enable CORS
 
 class TrafficSignalOptimizer:
-    def __init__(self, intersection_type, dataset_path):
+    def __init__(self, intersection_type, dataset):
         self.intersection_type = intersection_type
-        self.dataset = pd.read_csv(dataset_path)
+        self.dataset = dataset
         self.peak_hours, self.non_peak_hours = self.detect_peak_hours()
         self.adaptive_weights = self.initialize_weights()
 
@@ -51,7 +57,7 @@ class TrafficSignalOptimizer:
             optimized_data.append(data_row)
 
         optimized_df = pd.DataFrame(optimized_data)
-        output_file = f"/mnt/data/optimized_{self.intersection_type.lower()}_signals.csv"
+        output_file = f"optimized_{self.intersection_type.lower()}_signals.csv"
         optimized_df.to_csv(output_file, index=False)
 
         return optimized_df, output_file
@@ -67,11 +73,17 @@ class TrafficSignalOptimizer:
         else:
             return "Nighttime traffic is similar to daytime. Keeping normal cycle length."
 
-# Example Execution
-optimizer = TrafficSignalOptimizer("Four-Way", "synthetic_four_way_weekly_traffic.csv")
-optimized_timings, output_file = optimizer.optimize_signal_timings()
-night_strategy = optimizer.adjust_night_cycle()
+@app.route('/optimize', methods=['POST'])
+def optimize():
+    intersection_type = request.form['intersection_type']
+    file = request.files['file']
+    dataset = pd.read_csv(file)
 
-print("Optimized Signal Timings:", optimized_timings)
-print("Nighttime Strategy:", night_strategy)
-print("Optimized output saved to:", output_file)
+    optimizer = TrafficSignalOptimizer(intersection_type, dataset)
+    optimized_timings, output_file = optimizer.optimize_signal_timings()
+    night_strategy = optimizer.adjust_night_cycle()
+
+    return send_file(output_file, as_attachment=True)
+
+if __name__ == '__main__':
+    app.run(debug=True)

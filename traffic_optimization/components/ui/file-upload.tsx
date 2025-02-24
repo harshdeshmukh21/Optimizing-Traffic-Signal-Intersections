@@ -4,6 +4,11 @@ import { motion } from "framer-motion";
 import { IconUpload } from "@tabler/icons-react";
 import { useDropzone } from "react-dropzone";
 
+interface CSVData {
+  headers: string[];
+  rows: string[][];
+}
+
 const mainVariant = {
   initial: {
     x: 0,
@@ -31,15 +36,56 @@ export const FileUpload = ({
   onChange?: (files: File[]) => void;
 }) => {
   const [files, setFiles] = useState<File[]>([]);
+  const [downloadLink, setDownloadLink] = useState<string | null>(null);
+  const [csvData, setCSVData] = useState<CSVData | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const parseCSV = (text: string): CSVData => {
+    const lines = text.trim().split("\n");
+    const headers = lines[0].split(",").map((header) => header.trim());
+    const rows = lines
+      .slice(1)
+      .map((line) => line.split(",").map((cell) => cell.trim()));
+    return { headers, rows };
+  };
 
   const handleFileChange = (newFiles: File[]) => {
     setFiles((prevFiles) => [...prevFiles, ...newFiles]);
+    setCSVData(null);
     onChange && onChange(newFiles);
   };
 
   const handleClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleUpload = async () => {
+    if (files.length === 0) return;
+
+    const formData = new FormData();
+    formData.append("intersection_type", "Four-Way");
+    formData.append("file", files[0]);
+
+    try {
+      const response = await fetch("http://127.0.0.1:5000/optimize", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        setDownloadLink(url);
+
+        const text = await blob.text();
+        const parsedData = parseCSV(text);
+        setCSVData(parsedData);
+      } else {
+        console.error("Failed to upload file");
+      }
+    } catch (error) {
+      console.error("Error uploading file:", error);
+    }
   };
 
   const { getRootProps, isDragActive } = useDropzone({
@@ -56,7 +102,7 @@ export const FileUpload = ({
       <motion.div
         onClick={handleClick}
         whileHover="animate"
-        className="p-10 group/file block rounded-lg cursor-pointer w-full relative overflow-hidden"
+        className="p-10 group/file flex rounded-lg cursor-pointer w-full relative overflow-hidden items-center justify-center"
       >
         <input
           ref={fileInputRef}
@@ -110,7 +156,7 @@ export const FileUpload = ({
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       layout
-                      className="px-1 py-0.5 rounded-md bg-gray-100 dark:bg-neutral-800 "
+                      className="px-1 py-0.5 rounded-md bg-gray-100 dark:bg-neutral-800"
                     >
                       {file.type}
                     </motion.p>
@@ -164,6 +210,67 @@ export const FileUpload = ({
           </div>
         </div>
       </motion.div>
+
+      {files.length > 0 && (
+        <div className="flex justify-center mt-4">
+          <button
+            onClick={handleUpload}
+            className="px-8 py-2 bg-black text-white rounded-md"
+          >
+            Upload and Optimize
+          </button>
+        </div>
+      )}
+
+      {csvData && (
+        <div className="mt-8 px-4">
+          <h3 className="text-lg font-semibold mb-4 text-center">
+            Optimized Results
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="min-w-full bg-white dark:bg-neutral-800 rounded-lg overflow-hidden">
+              <thead className="bg-gray-50 dark:bg-neutral-700">
+                <tr>
+                  {csvData.headers.map((header, index) => (
+                    <th
+                      key={index}
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                    >
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-neutral-600">
+                {csvData.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((cell, cellIndex) => (
+                      <td
+                        key={cellIndex}
+                        className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100"
+                      >
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {downloadLink && (
+        <div className="flex justify-center mt-4">
+          <a
+            href={downloadLink}
+            download="optimized_signals.csv"
+            className="px-4 py-2 bg-green-500 text-white rounded-md mb-20"
+          >
+            Download Optimized File
+          </a>
+        </div>
+      )}
     </div>
   );
 };
@@ -172,7 +279,7 @@ export function GridPattern() {
   const columns = 41;
   const rows = 11;
   return (
-    <div className="flex bg-gray-100 dark:bg-neutral-900 flex-shrink-0 flex-wrap justify-center items-center gap-x-px gap-y-px  scale-105">
+    <div className="flex bg-gray-100 dark:bg-neutral-900 flex-shrink-0 flex-wrap justify-center items-center gap-x-px gap-y-px scale-105">
       {Array.from({ length: rows }).map((_, row) =>
         Array.from({ length: columns }).map((_, col) => {
           const index = row * columns + col;
