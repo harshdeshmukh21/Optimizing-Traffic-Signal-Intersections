@@ -18,8 +18,8 @@ const intersectionTypes = [
     description: "Three-way intersection forming a T shape",
   },
   {
-    type: "Y-Junction",
-    description: "Three-way intersection forming a Y shape",
+    type: "Diamond Intersection",
+    description: "Bridge and a ramp highway",
   },
   {
     type: "Roundabout",
@@ -264,7 +264,7 @@ export const FileUpload = ({
           <div className="flex justify-center mt-4">
             <button
               onClick={handleUpload}
-              className="px-8 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200"
+              className="px-8 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200 mt-4"
             >
               Upload and Optimize
             </button>
