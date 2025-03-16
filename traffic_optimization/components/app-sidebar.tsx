@@ -47,7 +47,7 @@ const data = {
         },
         {
           title: "Visualizer",
-          url: "#",
+          url: "/visualizer",
         },
         {
           title: "Live Traffic",
