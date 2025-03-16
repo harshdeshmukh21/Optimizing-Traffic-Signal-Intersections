@@ -2,6 +2,7 @@ import React, { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { IconUpload } from "@tabler/icons-react";
 import { useDropzone } from "react-dropzone";
+import { useRouter } from "next/navigation";
 
 interface CSVData {
   headers: string[];
@@ -48,6 +49,7 @@ export const FileUpload = ({
   const [selectedIntersection, setSelectedIntersection] =
     useState<string>("Four-Way");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
   const parseCSV = (text: string): CSVData => {
     const lines = text.trim().split("\n");
@@ -89,6 +91,12 @@ export const FileUpload = ({
         const text = await blob.text();
         const parsedData = parseCSV(text);
         setCSVData(parsedData);
+        
+        // Store the raw CSV data in localStorage for visualization
+        localStorage.setItem("optimizedCSVData", text);
+        
+        // Also store the parsed data structure for easier access
+        localStorage.setItem("parsedCSVData", JSON.stringify(parsedData));
       } else {
         console.error("Failed to upload file");
       }
@@ -310,7 +318,7 @@ export const FileUpload = ({
         )}
 
         {downloadLink && (
-          <div className="flex justify-center mt-4">
+          <div className="flex justify-center mt-4 space-x-4">
             <a
               href={downloadLink}
               download="optimized_signals.csv"
@@ -318,6 +326,11 @@ export const FileUpload = ({
             >
               Download Optimized File
             </a>
+            <button 
+              onClick={() => router.push("/visualizer")}
+              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md mb-20 transition-colors duration-200">
+              Visualise
+            </button>
           </div>
         )}
       </div>
