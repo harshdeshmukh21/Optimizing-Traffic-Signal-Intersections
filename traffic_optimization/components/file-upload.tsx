@@ -91,10 +91,10 @@ export const FileUpload = ({
         const text = await blob.text();
         const parsedData = parseCSV(text);
         setCSVData(parsedData);
-        
+
         // Store the raw CSV data in localStorage for visualization
         localStorage.setItem("optimizedCSVData", text);
-        
+
         // Also store the parsed data structure for easier access
         localStorage.setItem("parsedCSVData", JSON.stringify(parsedData));
       } else {
@@ -115,7 +115,7 @@ export const FileUpload = ({
   });
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4">
+    <div className="w-full max-w-6xl mx-auto px-4 -mt-8">
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-4 text-neutral-800 dark:text-neutral-200 mt-4">
           Select Intersection Type
@@ -326,9 +326,10 @@ export const FileUpload = ({
             >
               Download Optimized File
             </a>
-            <button 
+            <button
               onClick={() => router.push("/visualizer")}
-              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md mb-20 transition-colors duration-200">
+              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md mb-20 transition-colors duration-200"
+            >
               Visualise
             </button>
           </div>

@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { FileUpload } from "@/components/ui/file-upload";
+import { FileUpload } from "@/components/file-upload";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
   Breadcrumb,
