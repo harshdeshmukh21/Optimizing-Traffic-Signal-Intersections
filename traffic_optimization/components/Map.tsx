@@ -6,107 +6,163 @@ import {
   LoadScript,
   TrafficLayer,
   Marker,
-  StandaloneSearchBox,
 } from "@react-google-maps/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 
 const containerStyle = {
   width: "100%",
   height: "500px", // Adjust height as needed
 };
 
-const center = {
+const initialCenter = {
   lat: 19.0171,
   lng: 73.0175,
 };
 
-const searchBoxStyle: React.CSSProperties = {
-  boxSizing: "border-box",
-  border: "1px solid transparent",
-  width: "300px",
-  height: "40px",
-  padding: "0 12px",
-  borderRadius: "20px",
-  boxShadow: "0 2px 6px rgba(0, 0, 0, 0.3)",
-  fontSize: "14px",
-  outline: "none",
-  textOverflow: "ellipsis",
-  position: "absolute",
-  top: "15px",
-  left: "50%",
-  transform: "translateX(-50%)", // Centers the input box horizontally
+const trafficDescriptions = {
+  RED: { label: "Severe Traffic", color: "red" },
+  ORANGE: { label: "Heavy Traffic", color: "orange" },
+  GREEN: { label: "No Traffic", color: "green" },
 };
 
 const Maps: React.FC = () => {
   const [map, setMap] = useState<google.maps.Map | null>(null);
-  const [searchBox, setSearchBox] =
-    useState<google.maps.places.SearchBox | null>(null);
-  const [markers, setMarkers] = useState<google.maps.LatLngLiteral[]>([center]);
+  const [selectedIntersection, setSelectedIntersection] =
+    useState<google.maps.LatLngLiteral | null>(null);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [trafficInfo, setTrafficInfo] = useState<{
+    status: "RED" | "ORANGE" | "GREEN" | null;
+    description?: string;
+  } | null>(null);
 
   const onMapLoad = useCallback((map: google.maps.Map) => {
     setMap(map);
   }, []);
 
-  const onSearchBoxLoad = useCallback((box: google.maps.places.SearchBox) => {
-    setSearchBox(box);
-  }, []);
+  const handleMapClick = useCallback(
+    async (event: google.maps.MapMouseEvent) => {
+      if (event.latLng) {
+        const latLng = {
+          lat: event.latLng.lat(),
+          lng: event.latLng.lng(),
+        };
+        setSelectedIntersection(latLng);
+        map?.panTo(latLng); // Center the map on the selected point
+        map?.setZoom(18); // Zoom in on the selected point (adjust as needed)
 
-  const onPlacesChanged = useCallback(() => {
-    if (searchBox && map) {
-      const places = searchBox.getPlaces();
-
-      if (places && places.length > 0) {
-        const bounds = new google.maps.LatLngBounds();
-        const newMarkers: google.maps.LatLngLiteral[] = [];
-
-        places.forEach((place) => {
-          if (!place.geometry || !place.geometry.location) return;
-
-          newMarkers.push({
-            lat: place.geometry.location.lat(),
-            lng: place.geometry.location.lng(),
-          });
-
-          if (place.geometry.viewport) {
-            bounds.union(place.geometry.viewport);
-          } else {
-            bounds.extend(place.geometry.location);
-          }
-        });
-
-        setMarkers(newMarkers);
-        map.fitBounds(bounds);
+        // **Simulate fetching traffic data based on clicked location**
+        const simulatedTraffic = await simulateGetTrafficData(latLng);
+        setTrafficInfo(simulatedTraffic);
+        setIsDialogOpen(true);
       }
+    },
+    [map]
+  );
+
+  // **Simulate API call to get traffic data**
+  const simulateGetTrafficData = async (
+    latLng: google.maps.LatLngLiteral
+  ): Promise<{
+    status: "RED" | "ORANGE" | "GREEN" | null;
+    description?: string;
+  }> => {
+    return new Promise((resolve) => {
+      const statuses = ["GREEN", "ORANGE", "RED"];
+      const randomIndex = Math.floor(Math.random() * statuses.length);
+      const randomStatus: "RED" | "ORANGE" | "GREEN" = statuses[randomIndex] as
+        | "RED"
+        | "ORANGE"
+        | "GREEN";
+
+      let description = "";
+      if (randomStatus === "RED") {
+        description = "Severe congestion detected.";
+      } else if (randomStatus === "ORANGE") {
+        description = "Heavy traffic flow.";
+      } else if (randomStatus === "GREEN") {
+        description = "Traffic is flowing freely.";
+      }
+
+      setTimeout(() => {
+        resolve({ status: randomStatus, description });
+      }, 500);
+    });
+  };
+
+  const handleDialogClose = () => {
+    setIsDialogOpen(false);
+    setTrafficInfo(null);
+  };
+
+  // Helper function to get badge className based on traffic status
+  const getBadgeClassName = (status: "RED" | "ORANGE" | "GREEN") => {
+    if (status === "RED") {
+      return "bg-red-500 text-white";
+    } else if (status === "ORANGE") {
+      return "bg-orange-500 text-white";
+    } else {
+      return "bg-green-500 text-white";
     }
-  }, [searchBox, map]);
+  };
 
   return (
     <LoadScript
       googleMapsApiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || ""}
-      libraries={["places"]}
     >
       <GoogleMap
         mapContainerStyle={containerStyle}
-        center={center}
-        zoom={20}
+        center={initialCenter}
+        zoom={15} // Initial zoom level
         onLoad={onMapLoad}
+        onClick={handleMapClick}
       >
         <TrafficLayer />
 
-        {markers.map((position, index) => (
-          <Marker key={index} position={position} draggable />
-        ))}
-
-        <StandaloneSearchBox
-          onLoad={onSearchBoxLoad}
-          onPlacesChanged={onPlacesChanged}
-        >
-          <input
-            type="text"
-            placeholder="Search for places"
-            className="flex items-center justify"
-            style={searchBoxStyle}
+        {selectedIntersection && (
+          <Marker
+            position={selectedIntersection}
+            title="Selected Intersection"
           />
-        </StandaloneSearchBox>
+        )}
+
+        <AlertDialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Traffic Information</AlertDialogTitle>
+            </AlertDialogHeader>
+            <div className="mb-4">
+              {trafficInfo?.status &&
+                trafficDescriptions[trafficInfo.status] && (
+                  <Badge
+                    variant="outline"
+                    className={getBadgeClassName(trafficInfo.status)}
+                  >
+                    {trafficDescriptions[trafficInfo.status].label}
+                  </Badge>
+                )}
+              {trafficInfo?.description && (
+                <AlertDialogDescription className="mt-2">
+                  {trafficInfo.description}
+                </AlertDialogDescription>
+              )}
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={handleDialogClose}>
+                Close
+              </AlertDialogCancel>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </GoogleMap>
     </LoadScript>
   );

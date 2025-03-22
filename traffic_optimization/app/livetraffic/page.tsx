@@ -49,7 +49,8 @@ const page = () => {
               <CardTitle>Live Traffic</CardTitle>
               <CardDescription>
                 See the live traffic conditions and change the traffic signals
-                accordingly
+                accordingly. Please select an intersection to see live
+                conditions
               </CardDescription>
             </CardHeader>
             <CardContent>
