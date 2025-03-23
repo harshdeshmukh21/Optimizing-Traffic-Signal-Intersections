@@ -1,12 +1,25 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { IconUpload } from "@tabler/icons-react";
+import { IconUpload, IconTrash, IconArrowLeft, IconArrowRight } from "@tabler/icons-react";
 import { useDropzone } from "react-dropzone";
 import { useRouter } from "next/navigation";
 
 interface CSVData {
   headers: string[];
   rows: string[][];
+}
+
+interface OptimizedResult {
+  Day: string;
+  Hour: number;
+  Signal_1_Green: number;
+  Signal_2_Green: number;
+  Signal_3_Green?: number;
+  Signal_4_Green?: number;
+  Avg_Queue_Length: number;
+  Avg_Delay_Time: number;
+  Original_Queue_Length: number;
+  Original_Delay_Time: number;
 }
 
 const intersectionTypes = [
@@ -28,6 +41,8 @@ const intersectionTypes = [
   },
 ];
 
+const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
 const mainVariant = {
   initial: { x: 0, y: 0 },
   animate: { x: 20, y: -20, opacity: 0.9 },
@@ -46,10 +61,50 @@ export const FileUpload = ({
   const [files, setFiles] = useState<File[]>([]);
   const [downloadLink, setDownloadLink] = useState<string | null>(null);
   const [csvData, setCSVData] = useState<CSVData | null>(null);
-  const [selectedIntersection, setSelectedIntersection] =
-    useState<string>("Four-Way");
+  const [optimizedResults, setOptimizedResults] = useState<OptimizedResult[] | null>(null);
+  const [selectedIntersection, setSelectedIntersection] = useState<string>("Four-Way");
+  const [selectedDay, setSelectedDay] = useState<string>("Monday");
+  const [currentDayIndex, setCurrentDayIndex] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    const savedIntersectionType = localStorage.getItem("selectedIntersectionType");
+    const savedFileName = localStorage.getItem("uploadedFileName");
+    const savedFileSize = localStorage.getItem("uploadedFileSize");
+    const savedFileType = localStorage.getItem("uploadedFileType");
+    const savedFileModified = localStorage.getItem("uploadedFileModified");
+    const savedCsvData = localStorage.getItem("parsedCSVData");
+    
+    if (savedIntersectionType) {
+      setSelectedIntersection(savedIntersectionType);
+    }
+    
+    if (savedFileName && savedFileSize && savedFileType && savedFileModified) {
+      const mockFile = new File([""], savedFileName, {
+        type: savedFileType,
+        lastModified: parseInt(savedFileModified)
+      });
+      
+      Object.defineProperty(mockFile, 'size', {
+        value: parseInt(savedFileSize),
+        writable: false
+      });
+      
+      setFiles([mockFile]);
+    }
+    
+    if (savedCsvData) {
+      setCSVData(JSON.parse(savedCsvData));
+      
+      const rawCsvData = localStorage.getItem("optimizedCSVData");
+      if (rawCsvData) {
+        const blob = new Blob([rawCsvData], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        setDownloadLink(url);
+      }
+    }
+  }, []);
 
   const parseCSV = (text: string): CSVData => {
     const lines = text.trim().split("\n");
@@ -63,6 +118,7 @@ export const FileUpload = ({
   const handleFileChange = (newFiles: File[]) => {
     setFiles((prevFiles) => [...prevFiles, ...newFiles]);
     setCSVData(null);
+    setDownloadLink(null);
     onChange && onChange(newFiles);
   };
 
@@ -92,17 +148,63 @@ export const FileUpload = ({
         const parsedData = parseCSV(text);
         setCSVData(parsedData);
 
-        // Store the raw CSV data in localStorage for visualization
-        localStorage.setItem("optimizedCSVData", text);
+        // Read the original dataset to get the original values
+        const originalFileText = await files[0].text();
+        const originalParsedData = parseCSV(originalFileText);
 
-        // Also store the parsed data structure for easier access
+        // Parse the optimized results and map original values
+        const results = text.split("\n").slice(1).map((line) => {
+          const values = line.split(",");
+          const original = originalParsedData.rows.find(
+            (row) => row[0] === values[0] && parseInt(row[1]) === parseInt(values[1])
+          );
+
+          return {
+            Day: values[0],
+            Hour: parseInt(values[1]),
+            Signal_1_Green: parseInt(values[2]),
+            Signal_2_Green: parseInt(values[3]),
+            Signal_3_Green: values[4] ? parseInt(values[4]) : undefined,
+            Signal_4_Green: values[5] ? parseInt(values[5]) : undefined,
+            Avg_Queue_Length: parseFloat(values[6]), // Optimized Queue Length
+            Avg_Delay_Time: parseFloat(values[7]) || 0, // Optimized Delay Time
+            Original_Queue_Length: original ? parseFloat(original[6]) : 0, // Original Queue Length
+            Original_Delay_Time: original ? parseFloat(original[7]) : 0, // Original Delay Time
+          };
+        });
+
+        setOptimizedResults(results);
+
+        // Save the results to localStorage
+        localStorage.setItem("optimizedCSVData", JSON.stringify(results));
         localStorage.setItem("parsedCSVData", JSON.stringify(parsedData));
+        localStorage.setItem("selectedIntersectionType", selectedIntersection);
+        
+        localStorage.setItem("uploadedFileName", files[0].name);
+        localStorage.setItem("uploadedFileSize", files[0].size.toString());
+        localStorage.setItem("uploadedFileType", files[0].type);
+        localStorage.setItem("uploadedFileModified", files[0].lastModified.toString());
       } else {
         console.error("Failed to upload file");
       }
     } catch (error) {
       console.error("Error uploading file:", error);
     }
+  };
+
+  const handleRemoveDataset = () => {
+    setFiles([]);
+    setCSVData(null);
+    setDownloadLink(null);
+    setOptimizedResults(null);
+    
+    localStorage.removeItem("optimizedCSVData");
+    localStorage.removeItem("parsedCSVData");
+    localStorage.removeItem("selectedIntersectionType");
+    localStorage.removeItem("uploadedFileName");
+    localStorage.removeItem("uploadedFileSize");
+    localStorage.removeItem("uploadedFileType");
+    localStorage.removeItem("uploadedFileModified");
   };
 
   const { getRootProps, isDragActive } = useDropzone({
@@ -113,6 +215,116 @@ export const FileUpload = ({
       console.log(error);
     },
   });
+
+  const handleNextDay = () => {
+    setCurrentDayIndex((prevIndex) => (prevIndex + 1) % dayNames.length);
+    setSelectedDay(dayNames[(currentDayIndex + 1) % dayNames.length]);
+  };
+
+  const handlePreviousDay = () => {
+    setCurrentDayIndex((prevIndex) => (prevIndex - 1 + dayNames.length) % dayNames.length);
+    setSelectedDay(dayNames[(currentDayIndex - 1 + dayNames.length) % dayNames.length]);
+  };
+
+  const renderResultsTable = () => {
+    if (!optimizedResults) return null;
+
+    const filteredResults = optimizedResults.filter((result) => result.Day === selectedDay);
+
+    return (
+      <div className="mt-8">
+        <h3 className="text-lg font-semibold mb-4 text-center text-neutral-800 dark:text-neutral-200">
+          Optimized Results for {selectedDay}
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="min-w-full bg-white dark:bg-neutral-800 rounded-lg overflow-hidden">
+            <thead className="bg-gray-50 dark:bg-neutral-700">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Day
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Hour
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Signal 1 Green
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Signal 2 Green
+                </th>
+                {selectedIntersection === "Four-Way" || selectedIntersection === "Diamond" ? (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Signal 3 Green
+                  </th>
+                ) : null}
+                {selectedIntersection === "Four-Way" ? (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Signal 4 Green
+                  </th>
+                ) : null}
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Avg Queue Length
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Avg Delay Time
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-neutral-600">
+              {filteredResults.map((result, index) => (
+                <tr key={index}>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {result.Day}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {result.Hour}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {result.Signal_1_Green}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {result.Signal_2_Green}
+                  </td>
+                  {selectedIntersection === "Four-Way" || selectedIntersection === "Diamond" ? (
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                      {result.Signal_3_Green}
+                    </td>
+                  ) : null}
+                  {selectedIntersection === "Four-Way" ? (
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                      {result.Signal_4_Green}
+                    </td>
+                  ) : null}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {result.Avg_Queue_Length}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                    {result.Avg_Delay_Time}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex justify-center mt-4 space-x-4">
+          <button
+            onClick={handlePreviousDay}
+            className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
+          >
+            <IconArrowLeft size={16} />
+            Previous Day
+          </button>
+          <button
+            onClick={handleNextDay}
+            className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
+          >
+            Next Day
+            <IconArrowRight size={16} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="w-full max-w-6xl mx-auto px-4 -mt-8">
@@ -268,7 +480,7 @@ export const FileUpload = ({
           </div>
         </motion.div>
 
-        {files.length > 0 && (
+        {files.length > 0 && !csvData && (
           <div className="flex justify-center mt-4">
             <button
               onClick={handleUpload}
@@ -279,58 +491,29 @@ export const FileUpload = ({
           </div>
         )}
 
-        {csvData && (
-          <div className="mt-8">
-            <h3 className="text-lg font-semibold mb-4 text-center text-neutral-800 dark:text-neutral-200">
-              Optimized Results
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full bg-white dark:bg-neutral-800 rounded-lg overflow-hidden">
-                <thead className="bg-gray-50 dark:bg-neutral-700">
-                  <tr>
-                    {csvData.headers.map((header, index) => (
-                      <th
-                        key={index}
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-                      >
-                        {header}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-neutral-600">
-                  {csvData.rows.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
-                      {row.map((cell, cellIndex) => (
-                        <td
-                          key={cellIndex}
-                          className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100"
-                        >
-                          {cell}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        {optimizedResults && renderResultsTable()}
 
         {downloadLink && (
           <div className="flex justify-center mt-4 space-x-4">
             <a
               href={downloadLink}
               download="optimized_signals.csv"
-              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md mb-20 transition-colors duration-200"
+              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md transition-colors duration-200"
             >
               Download Optimized File
             </a>
             <button
               onClick={() => router.push("/visualizer")}
-              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md mb-20 transition-colors duration-200"
+              className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md transition-colors duration-200"
             >
               Visualise
+            </button>
+            <button
+              onClick={handleRemoveDataset}
+              className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
+            >
+              <IconTrash size={16} />
+              Remove Dataset
             </button>
           </div>
         )}
