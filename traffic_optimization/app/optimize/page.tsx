@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { FileUpload } from "@/components/file-upload";
+import TrafficFileUpload from "@/components/file-upload";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
   Breadcrumb,
@@ -37,7 +37,7 @@ const page = () => {
             </Breadcrumb>
           </header>
           <div className="flex items-center justify-center h-full">
-            <FileUpload />
+            <TrafficFileUpload />
           </div>
         </SidebarInset>
       </SidebarProvider>

@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import { FaTrafficLight } from "react-icons/fa6";
 import { SearchForm } from "@/components/search-form";
 import { VersionSwitcher } from "@/components/version-switcher";
 import {
@@ -34,7 +35,7 @@ const data = {
     //   ],
     // },
     {
-      title: "Building Your Application",
+      title: "Menu",
       url: "#",
       items: [
         {
@@ -62,10 +63,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar {...props}>
       <SidebarHeader>
-        <VersionSwitcher
+        {/* <VersionSwitcher
           versions={data.versions}
           defaultVersion={data.versions[0]}
-        />
+        /> */}
+        <div className="flex flex-row p-2 gap-3">
+          <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            <FaTrafficLight />
+          </div>
+          <div className="flex flex-col gap-0.5 leading-none">
+            <span className="font-semibold">OptiFlow</span>
+            <span className="font-normal text-[11px] mt-1">
+              Optimize the flow of your traffic
+            </span>
+          </div>
+        </div>
+
         <SearchForm />
       </SidebarHeader>
       <SidebarContent>

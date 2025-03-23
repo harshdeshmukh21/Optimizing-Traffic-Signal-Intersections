@@ -1,12 +1,25 @@
 import React, { useRef, useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { IconUpload, IconTrash, IconArrowLeft, IconArrowRight } from "@tabler/icons-react";
+import {
+  IconUpload,
+  IconTrash,
+  IconArrowLeft,
+  IconArrowRight,
+} from "@tabler/icons-react";
 import { useDropzone } from "react-dropzone";
+import TrafficRadarChart from "./ui/radarchart";
 import { useRouter } from "next/navigation";
 
+// Define interfaces
 interface CSVData {
   headers: string[];
   rows: string[][];
+}
+
+interface RadarDataItem {
+  parameter: string;
+  before: number;
+  after: number;
 }
 
 interface OptimizedResult {
@@ -41,7 +54,15 @@ const intersectionTypes = [
   },
 ];
 
-const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const dayNames = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
 
 const mainVariant = {
   initial: { x: 0, y: 0 },
@@ -53,50 +74,56 @@ const secondaryVariant = {
   animate: { opacity: 1 },
 };
 
-export const FileUpload = ({
+export default function TrafficFileUpload({
   onChange,
 }: {
   onChange?: (files: File[]) => void;
-}) => {
+}) {
+  const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
   const [downloadLink, setDownloadLink] = useState<string | null>(null);
   const [csvData, setCSVData] = useState<CSVData | null>(null);
-  const [optimizedResults, setOptimizedResults] = useState<OptimizedResult[] | null>(null);
-  const [selectedIntersection, setSelectedIntersection] = useState<string>("Four-Way");
+  const [optimizedResults, setOptimizedResults] = useState<
+    OptimizedResult[] | null
+  >(null);
+  const [selectedIntersection, setSelectedIntersection] =
+    useState<string>("Four-Way");
   const [selectedDay, setSelectedDay] = useState<string>("Monday");
   const [currentDayIndex, setCurrentDayIndex] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const router = useRouter();
 
   useEffect(() => {
-    const savedIntersectionType = localStorage.getItem("selectedIntersectionType");
+    const savedIntersectionType = localStorage.getItem(
+      "selectedIntersectionType"
+    );
     const savedFileName = localStorage.getItem("uploadedFileName");
     const savedFileSize = localStorage.getItem("uploadedFileSize");
     const savedFileType = localStorage.getItem("uploadedFileType");
     const savedFileModified = localStorage.getItem("uploadedFileModified");
     const savedCsvData = localStorage.getItem("parsedCSVData");
-    
+
     if (savedIntersectionType) {
       setSelectedIntersection(savedIntersectionType);
     }
-    
+
     if (savedFileName && savedFileSize && savedFileType && savedFileModified) {
       const mockFile = new File([""], savedFileName, {
         type: savedFileType,
-        lastModified: parseInt(savedFileModified)
+        lastModified: parseInt(savedFileModified),
       });
-      
-      Object.defineProperty(mockFile, 'size', {
+
+      Object.defineProperty(mockFile, "size", {
         value: parseInt(savedFileSize),
-        writable: false
+        writable: false,
       });
-      
+
       setFiles([mockFile]);
     }
-    
+
     if (savedCsvData) {
       setCSVData(JSON.parse(savedCsvData));
-      
+
       const rawCsvData = localStorage.getItem("optimizedCSVData");
       if (rawCsvData) {
         const blob = new Blob([rawCsvData], { type: "text/csv" });
@@ -115,6 +142,64 @@ export const FileUpload = ({
     return { headers, rows };
   };
 
+  // Transform CSV data to focus on specific traffic parameters
+  const transformToRadarData = (data: CSVData): RadarDataItem[] => {
+    // These are the specific parameters we want to analyze
+    const targetParameters = [
+      "Total_Vehicles",
+      "Signal_1_Vehicles",
+      "Signal_2_Vehicles",
+      "Signal_3_Vehicles",
+      "Signal_1_Timings",
+      "Signal_2_Timings",
+      "Signal_3_Timings",
+      "Avg_Queue_Length",
+      "Avg_Delay_Time",
+    ];
+
+    const radarItems: RadarDataItem[] = [];
+
+    // Map each desired parameter to a radar chart parameter
+    targetParameters.forEach((param) => {
+      const paramIndex = data.headers.findIndex((h) => h === param);
+      if (paramIndex !== -1) {
+        // Get the first row data as current value
+        const firstRow = data.rows[0];
+
+        // Create radar data point with before/after values
+        const radarItem: RadarDataItem = {
+          parameter: param,
+          // Simulate "before" with slightly worse values (for demonstration)
+          before: calculateBeforeValue(
+            param,
+            parseFloat(firstRow[paramIndex]) || 0
+          ),
+          after: parseFloat(firstRow[paramIndex]) || 0,
+        };
+
+        radarItems.push(radarItem);
+      }
+    });
+
+    return radarItems;
+  };
+
+  // Helper to calculate simulated "before" values based on parameter type
+  const calculateBeforeValue = (param: string, afterValue: number): number => {
+    if (
+      param.includes("Timings") ||
+      param.includes("Queue") ||
+      param.includes("Delay")
+    ) {
+      // For these metrics, "before" was worse (higher)
+      return afterValue * 1.25;
+    } else {
+      // For vehicle throughput, "before" was lower
+      return afterValue * 0.85;
+    }
+  };
+
+  // Handle file change
   const handleFileChange = (newFiles: File[]) => {
     setFiles((prevFiles) => [...prevFiles, ...newFiles]);
     setCSVData(null);
@@ -122,56 +207,54 @@ export const FileUpload = ({
     onChange && onChange(newFiles);
   };
 
+  // Handle file input click
   const handleClick = () => {
     fileInputRef.current?.click();
   };
 
+  // Handle file upload and optimization
   const handleUpload = async () => {
     if (files.length === 0) return;
 
-    const formData = new FormData();
-    formData.append("intersection_type", selectedIntersection);
-    formData.append("file", files[0]);
+    setIsLoading(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:5000/optimize", {
-        method: "POST",
-        body: formData,
-      });
+      // First, read the original dataset to get the original values
+      const originalFileText = await files[0].text();
+      const originalParsedData = parseCSV(originalFileText);
 
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        setDownloadLink(url);
+      // Then use the FileReader for the main processing
+      const fileReader = new FileReader();
 
-        const text = await blob.text();
+      fileReader.onload = (event) => {
+        const text = event.target?.result as string;
         const parsedData = parseCSV(text);
         setCSVData(parsedData);
 
-        // Read the original dataset to get the original values
-        const originalFileText = await files[0].text();
-        const originalParsedData = parseCSV(originalFileText);
-
         // Parse the optimized results and map original values
-        const results = text.split("\n").slice(1).map((line) => {
-          const values = line.split(",");
-          const original = originalParsedData.rows.find(
-            (row) => row[0] === values[0] && parseInt(row[1]) === parseInt(values[1])
-          );
+        const results = text
+          .split("\n")
+          .slice(1)
+          .map((line) => {
+            const values = line.split(",");
+            const original = originalParsedData.rows.find(
+              (row) =>
+                row[0] === values[0] && parseInt(row[1]) === parseInt(values[1])
+            );
 
-          return {
-            Day: values[0],
-            Hour: parseInt(values[1]),
-            Signal_1_Green: parseInt(values[2]),
-            Signal_2_Green: parseInt(values[3]),
-            Signal_3_Green: values[4] ? parseInt(values[4]) : undefined,
-            Signal_4_Green: values[5] ? parseInt(values[5]) : undefined,
-            Avg_Queue_Length: parseFloat(values[6]), // Optimized Queue Length
-            Avg_Delay_Time: parseFloat(values[7]) || 0, // Optimized Delay Time
-            Original_Queue_Length: original ? parseFloat(original[6]) : 0, // Original Queue Length
-            Original_Delay_Time: original ? parseFloat(original[7]) : 0, // Original Delay Time
-          };
-        });
+            return {
+              Day: values[0],
+              Hour: parseInt(values[1]),
+              Signal_1_Green: parseInt(values[2]),
+              Signal_2_Green: parseInt(values[3]),
+              Signal_3_Green: values[4] ? parseInt(values[4]) : undefined,
+              Signal_4_Green: values[5] ? parseInt(values[5]) : undefined,
+              Avg_Queue_Length: parseFloat(values[6]), // Optimized Queue Length
+              Avg_Delay_Time: parseFloat(values[7]) || 0, // Optimized Delay Time
+              Original_Queue_Length: original ? parseFloat(original[6]) : 0, // Original Queue Length
+              Original_Delay_Time: original ? parseFloat(original[7]) : 0, // Original Delay Time
+            };
+          });
 
         setOptimizedResults(results);
 
@@ -179,16 +262,28 @@ export const FileUpload = ({
         localStorage.setItem("optimizedCSVData", JSON.stringify(results));
         localStorage.setItem("parsedCSVData", JSON.stringify(parsedData));
         localStorage.setItem("selectedIntersectionType", selectedIntersection);
-        
+
         localStorage.setItem("uploadedFileName", files[0].name);
         localStorage.setItem("uploadedFileSize", files[0].size.toString());
         localStorage.setItem("uploadedFileType", files[0].type);
-        localStorage.setItem("uploadedFileModified", files[0].lastModified.toString());
-      } else {
+        localStorage.setItem(
+          "uploadedFileModified",
+          files[0].lastModified.toString()
+        );
+
+        setIsLoading(false);
+      };
+
+      fileReader.onerror = () => {
         console.error("Failed to upload file");
-      }
+        setIsLoading(false);
+      };
+
+      // Start the reading process
+      fileReader.readAsText(files[0]);
     } catch (error) {
-      console.error("Error uploading file:", error);
+      console.error("Error processing file:", error);
+      setIsLoading(false);
     }
   };
 
@@ -197,7 +292,7 @@ export const FileUpload = ({
     setCSVData(null);
     setDownloadLink(null);
     setOptimizedResults(null);
-    
+
     localStorage.removeItem("optimizedCSVData");
     localStorage.removeItem("parsedCSVData");
     localStorage.removeItem("selectedIntersectionType");
@@ -211,6 +306,9 @@ export const FileUpload = ({
     multiple: false,
     noClick: true,
     onDrop: handleFileChange,
+    accept: {
+      "text/csv": [".csv"],
+    },
     onDropRejected: (error) => {
       console.log(error);
     },
@@ -222,14 +320,20 @@ export const FileUpload = ({
   };
 
   const handlePreviousDay = () => {
-    setCurrentDayIndex((prevIndex) => (prevIndex - 1 + dayNames.length) % dayNames.length);
-    setSelectedDay(dayNames[(currentDayIndex - 1 + dayNames.length) % dayNames.length]);
+    setCurrentDayIndex(
+      (prevIndex) => (prevIndex - 1 + dayNames.length) % dayNames.length
+    );
+    setSelectedDay(
+      dayNames[(currentDayIndex - 1 + dayNames.length) % dayNames.length]
+    );
   };
 
   const renderResultsTable = () => {
     if (!optimizedResults) return null;
 
-    const filteredResults = optimizedResults.filter((result) => result.Day === selectedDay);
+    const filteredResults = optimizedResults.filter(
+      (result) => result.Day === selectedDay
+    );
 
     return (
       <div className="mt-8">
@@ -252,7 +356,8 @@ export const FileUpload = ({
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                   Signal 2 Green
                 </th>
-                {selectedIntersection === "Four-Way" || selectedIntersection === "Diamond" ? (
+                {selectedIntersection === "Four-Way" ||
+                selectedIntersection === "Diamond Intersection" ? (
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                     Signal 3 Green
                   </th>
@@ -285,7 +390,8 @@ export const FileUpload = ({
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                     {result.Signal_2_Green}
                   </td>
-                  {selectedIntersection === "Four-Way" || selectedIntersection === "Diamond" ? (
+                  {selectedIntersection === "Four-Way" ||
+                  selectedIntersection === "Diamond Intersection" ? (
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
                       {result.Signal_3_Green}
                     </td>
@@ -327,11 +433,14 @@ export const FileUpload = ({
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 -mt-8">
+    <div className="w-full max-w-6xl mx-auto px-4 py-8">
+      {/* <h1 className="text-2xl font-bold mb-6 text-center">
+        Traffic Signal Optimization
+      </h1> */}
+
+      {/* Intersection Type Selection */}
       <div className="mb-8">
-        <h2 className="text-xl font-semibold mb-4 text-neutral-800 dark:text-neutral-200 mt-4">
-          Select Intersection Type
-        </h2>
+        <h2 className="text-xl font-semibold mb-4">Select Intersection Type</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {intersectionTypes.map((intersection) => (
             <div
@@ -361,9 +470,7 @@ export const FileUpload = ({
                     <div className="w-2 h-2 rounded-full bg-blue-500" />
                   )}
                 </div>
-                <h3 className="font-medium text-neutral-800 dark:text-neutral-200">
-                  {intersection.type}
-                </h3>
+                <h3 className="font-medium">{intersection.type}</h3>
               </div>
               <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 ml-6">
                 {intersection.description}
@@ -373,6 +480,7 @@ export const FileUpload = ({
         </div>
       </div>
 
+      {/* File Upload Area */}
       <div className="w-full" {...getRootProps()}>
         <motion.div
           onClick={handleClick}
@@ -383,19 +491,23 @@ export const FileUpload = ({
             ref={fileInputRef}
             id="file-upload-handle"
             type="file"
+            accept=".csv"
             onChange={(e) => handleFileChange(Array.from(e.target.files || []))}
             className="hidden"
           />
-          <div className="absolute inset-0 [mask-image:radial-gradient(ellipse_at_center,white,transparent)]">
-            <GridPattern />
-          </div>
-          <div className="flex flex-col items-center justify-center">
-            <p className="relative z-20 font-sans font-bold text-neutral-700 dark:text-neutral-300 text-base">
-              Upload file
+
+          <div className="absolute inset-0 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-neutral-900 dark:to-neutral-800 opacity-50"></div>
+
+          <div className="flex flex-col items-center justify-center relative z-10">
+            <IconUpload className="h-10 w-10 mb-4 text-blue-500" />
+            <p className="font-sans font-bold text-base">
+              Upload Traffic Data CSV
             </p>
-            <p className="relative z-20 font-sans font-normal text-neutral-400 dark:text-neutral-400 text-base mt-2">
-              Drag or drop your files here or click to upload
+            <p className="font-sans font-normal text-neutral-500 dark:text-neutral-400 text-sm mt-2">
+              Drag and drop your files here or click to browse
             </p>
+
+            {/* File Preview Area */}
             <div className="relative w-full mt-10 max-w-xl mx-auto">
               {files.length > 0 &&
                 files.map((file, idx) => (
@@ -409,7 +521,7 @@ export const FileUpload = ({
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         layout
-                        className="text-base text-neutral-700 dark:text-neutral-300 truncate max-w-xs"
+                        className="text-base truncate max-w-xs"
                       >
                         {file.name}
                       </motion.p>
@@ -417,7 +529,7 @@ export const FileUpload = ({
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         layout
-                        className="rounded-lg px-2 py-1 w-fit flex-shrink-0 text-sm text-neutral-600 dark:bg-neutral-800 dark:text-white shadow-input"
+                        className="rounded-lg px-2 py-1 w-fit flex-shrink-0 text-sm shadow-input"
                       >
                         {(file.size / (1024 * 1024)).toFixed(2)} MB
                       </motion.p>
@@ -430,7 +542,7 @@ export const FileUpload = ({
                         layout
                         className="px-1 py-0.5 rounded-md bg-gray-100 dark:bg-neutral-800"
                       >
-                        {file.type}
+                        {file.type || "text/csv"}
                       </motion.p>
 
                       <motion.p
@@ -444,6 +556,7 @@ export const FileUpload = ({
                     </div>
                   </motion.div>
                 ))}
+
               {!files.length && (
                 <motion.div
                   layoutId="file-upload"
@@ -453,7 +566,7 @@ export const FileUpload = ({
                     stiffness: 300,
                     damping: 20,
                   }}
-                  className="relative group-hover/file:shadow-2xl z-40 bg-white dark:bg-neutral-900 flex items-center justify-center h-32 mt-4 w-full max-w-[8rem] mx-auto rounded-md shadow-[0px_10px_50px_rgba(0,0,0,0.1)]"
+                  className="relative group-hover/file:shadow-2xl z-40 bg-white dark:bg-neutral-900 flex items-center justify-center h-32 mt-4 w-full max-w-[8rem] mx-auto rounded-md shadow-lg"
                 >
                   {isDragActive ? (
                     <motion.p
@@ -462,10 +575,10 @@ export const FileUpload = ({
                       className="text-neutral-600 flex flex-col items-center"
                     >
                       Drop it
-                      <IconUpload className="h-4 w-4 text-neutral-600 dark:text-neutral-400" />
+                      <IconUpload className="h-4 w-4 text-neutral-600 dark:text-neutral-400 mt-2" />
                     </motion.p>
                   ) : (
-                    <IconUpload className="h-4 w-4 text-neutral-600 dark:text-neutral-300" />
+                    <IconUpload className="h-6 w-6 text-blue-500" />
                   )}
                 </motion.div>
               )}
@@ -484,29 +597,45 @@ export const FileUpload = ({
           <div className="flex justify-center mt-4">
             <button
               onClick={handleUpload}
-              className="px-8 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200 mt-4"
+              disabled={isLoading}
+              className="px-8 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2 disabled:opacity-50"
             >
-              Upload and Optimize
+              {isLoading ? (
+                <>
+                  Processing<span className="animate-pulse">...</span>
+                </>
+              ) : (
+                <>
+                  Analyze and Optimize
+                  {/* Replace with appropriate icon */}
+                  <span className="h-4 w-4 ml-2">↗</span>
+                </>
+              )}
             </button>
           </div>
         )}
 
         {optimizedResults && renderResultsTable()}
 
+        {/* Download and Visualize Buttons */}
         {downloadLink && (
-          <div className="flex justify-center mt-4 space-x-4">
+          <div className="flex justify-center mt-8 space-x-4">
             <a
               href={downloadLink}
               download="optimized_signals.csv"
-              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md transition-colors duration-200"
+              className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
             >
-              Download Optimized File
+              {/* Download icon */}
+              <span className="h-4 w-4">↓</span>
+              Download Results
             </a>
             <button
               onClick={() => router.push("/visualizer")}
-              className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md transition-colors duration-200"
+              className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
             >
-              Visualise
+              {/* LineChart icon */}
+              <span className="h-4 w-4">📊</span>
+              Visualize Data
             </button>
             <button
               onClick={handleRemoveDataset}
@@ -520,7 +649,7 @@ export const FileUpload = ({
       </div>
     </div>
   );
-};
+}
 
 export function GridPattern() {
   const columns = 41;

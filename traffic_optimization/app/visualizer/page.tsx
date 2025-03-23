@@ -62,19 +62,27 @@ export default function Visualizer() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const days = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+  ];
 
   // Function to check for storage changes
   const checkStorageChanges = () => {
     try {
       const savedParsedData = localStorage.getItem("parsedCSVData");
-      
+
       if (!savedParsedData) {
         setChartData([]);
         setError("No optimization data found. Please upload a file.");
         return;
       }
-      
+
       const parsedData: CSVData = JSON.parse(savedParsedData);
       transformDataForChart(parsedData);
     } catch (error) {
@@ -107,25 +115,27 @@ export default function Visualizer() {
 
   // Listen for storage events to update the visualization when dataset is removed
   useEffect(() => {
-    window.addEventListener('storage', (e) => {
+    window.addEventListener("storage", (e) => {
       if (e.key === "parsedCSVData" || e.key === null) {
         checkStorageChanges();
       }
     });
 
     const interval = setInterval(checkStorageChanges, 1000);
-    
+
     return () => {
       clearInterval(interval);
-      window.removeEventListener('storage', checkStorageChanges);
+      window.removeEventListener("storage", checkStorageChanges);
     };
   }, []);
 
   const processCSV = (csvText: string) => {
     try {
       const lines = csvText.trim().split("\n");
-      const headers = lines[0].split(",").map(h => h.trim());
-      const rows = lines.slice(1).map(line => line.split(",").map(cell => cell.trim()));
+      const headers = lines[0].split(",").map((h) => h.trim());
+      const rows = lines
+        .slice(1)
+        .map((line) => line.split(",").map((cell) => cell.trim()));
 
       const parsedData: CSVData = { headers, rows };
       localStorage.setItem("parsedCSVData", JSON.stringify(parsedData));
@@ -139,7 +149,7 @@ export default function Visualizer() {
   const transformDataForChart = (parsedData: CSVData) => {
     const { headers, rows } = parsedData;
 
-    const data: SignalData[] = rows.map(row => ({
+    const data: SignalData[] = rows.map((row) => ({
       Day: row[0],
       Hour: parseInt(row[1]),
       Signal_1_Green: parseInt(row[2]),
@@ -165,14 +175,18 @@ export default function Visualizer() {
   };
 
   const handlePreviousDay = () => {
-    setCurrentDayIndex((prevIndex) => (prevIndex - 1 + days.length) % days.length);
+    setCurrentDayIndex(
+      (prevIndex) => (prevIndex - 1 + days.length) % days.length
+    );
   };
 
   const navigateToUpload = () => {
     router.push("/optimize");
   };
 
-  const filteredData = chartData.filter((data) => data.Day === days[currentDayIndex]);
+  const filteredData = chartData.filter(
+    (data) => data.Day === days[currentDayIndex]
+  );
 
   return (
     <SidebarProvider>
@@ -193,9 +207,9 @@ export default function Visualizer() {
             </BreadcrumbList>
           </Breadcrumb>
           <div className="ml-auto">
-            <Button 
-              variant="outline" 
-              size="sm" 
+            <Button
+              variant="outline"
+              size="sm"
               onClick={navigateToUpload}
               className="flex items-center gap-2"
             >
@@ -206,10 +220,12 @@ export default function Visualizer() {
 
         <div className="flex flex-1 flex-col gap-4 p-4">
           {chartData.length > 0 && (
-            <div className="grid grid-cols-1 gap-4 mb-4">
+            <div className="grid grid-cols-1 gap-4">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Dataset Status</CardTitle>
+                  <CardTitle className="text-sm font-medium">
+                    Dataset Status
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-lg font-bold flex items-center gap-2">
@@ -223,12 +239,13 @@ export default function Visualizer() {
               </Card>
             </div>
           )}
-        
+
           <Card>
             <CardHeader>
               <CardTitle>Green Signal Time Comparison</CardTitle>
               <CardDescription>
-                Comparing original and optimized green signal durations for {days[currentDayIndex]}
+                Comparing original and optimized green signal durations for{" "}
+                {days[currentDayIndex]}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -240,8 +257,8 @@ export default function Visualizer() {
                 <div className="flex flex-col items-center justify-center h-64 gap-4">
                   <BarChart2 className="h-12 w-12 text-gray-300" />
                   <p className="text-gray-500">{error}</p>
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     onClick={navigateToUpload}
                     className="mt-2"
                   >
@@ -250,28 +267,28 @@ export default function Visualizer() {
                 </div>
               ) : filteredData.length > 0 ? (
                 <div className="w-full overflow-x-auto">
-                  <BarChart 
-                    width={800} 
-                    height={400} 
+                  <BarChart
+                    width={800}
+                    height={400}
                     data={filteredData}
                     margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="Hour" 
+                    <XAxis
+                      dataKey="Hour"
                       tick={{ fontSize: 12 }}
                       interval={0}
                       angle={-45}
                       textAnchor="end"
                       height={80}
                     />
-                    <YAxis 
-                      label={{ 
-                        value: 'Time (seconds)', 
-                        angle: -90, 
-                        position: 'insideLeft',
-                        style: { textAnchor: 'middle' }
-                      }} 
+                    <YAxis
+                      label={{
+                        value: "Time (seconds)",
+                        angle: -90,
+                        position: "insideLeft",
+                        style: { textAnchor: "middle" },
+                      }}
                     />
                     <Tooltip />
                     <Legend />
@@ -291,8 +308,8 @@ export default function Visualizer() {
                 <div className="flex flex-col items-center justify-center h-64 gap-4">
                   <BarChart2 className="h-12 w-12 text-gray-300" />
                   <p className="text-gray-500">No data to display</p>
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     onClick={navigateToUpload}
                     className="mt-2"
                   >
@@ -310,16 +327,10 @@ export default function Visualizer() {
                 )}
               </div>
               <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  onClick={handlePreviousDay}
-                >
+                <Button variant="outline" onClick={handlePreviousDay}>
                   Previous Day
                 </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={handleNextDay}
-                >
+                <Button variant="outline" onClick={handleNextDay}>
                   Next Day
                 </Button>
               </div>
@@ -330,34 +341,35 @@ export default function Visualizer() {
             <CardHeader>
               <CardTitle>Average Queue Length Comparison</CardTitle>
               <CardDescription>
-                Comparing original and optimized average queue lengths for {days[currentDayIndex]}
+                Comparing original and optimized average queue lengths for{" "}
+                {days[currentDayIndex]}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {filteredData.length > 0 ? (
                 <div className="w-full overflow-x-auto">
-                  <BarChart 
-                    width={800} 
-                    height={400} 
+                  <BarChart
+                    width={800}
+                    height={400}
                     data={filteredData}
                     margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="Hour" 
+                    <XAxis
+                      dataKey="Hour"
                       tick={{ fontSize: 12 }}
                       interval={0}
                       angle={-45}
                       textAnchor="end"
                       height={80}
                     />
-                    <YAxis 
-                      label={{ 
-                        value: 'Queue Length', 
-                        angle: -90, 
-                        position: 'insideLeft',
-                        style: { textAnchor: 'middle' }
-                      }} 
+                    <YAxis
+                      label={{
+                        value: "Queue Length",
+                        angle: -90,
+                        position: "insideLeft",
+                        style: { textAnchor: "middle" },
+                      }}
                     />
                     <Tooltip />
                     <Legend />
@@ -389,16 +401,10 @@ export default function Visualizer() {
                 )}
               </div>
               <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  onClick={handlePreviousDay}
-                >
+                <Button variant="outline" onClick={handlePreviousDay}>
                   Previous Day
                 </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={handleNextDay}
-                >
+                <Button variant="outline" onClick={handleNextDay}>
                   Next Day
                 </Button>
               </div>
@@ -409,34 +415,35 @@ export default function Visualizer() {
             <CardHeader>
               <CardTitle>Average Delay Time Comparison</CardTitle>
               <CardDescription>
-                Comparing original and optimized average delay times for {days[currentDayIndex]}
+                Comparing original and optimized average delay times for{" "}
+                {days[currentDayIndex]}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {filteredData.length > 0 ? (
                 <div className="w-full overflow-x-auto">
-                  <BarChart 
-                    width={800} 
-                    height={400} 
+                  <BarChart
+                    width={800}
+                    height={400}
                     data={filteredData}
                     margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis 
-                      dataKey="Hour" 
+                    <XAxis
+                      dataKey="Hour"
                       tick={{ fontSize: 12 }}
                       interval={0}
                       angle={-45}
                       textAnchor="end"
                       height={80}
                     />
-                    <YAxis 
-                      label={{ 
-                        value: 'Delay Time (seconds)', 
-                        angle: -90, 
-                        position: 'insideLeft',
-                        style: { textAnchor: 'middle' }
-                      }} 
+                    <YAxis
+                      label={{
+                        value: "Delay Time (seconds)",
+                        angle: -90,
+                        position: "insideLeft",
+                        style: { textAnchor: "middle" },
+                      }}
                     />
                     <Tooltip />
                     <Legend />
@@ -468,16 +475,10 @@ export default function Visualizer() {
                 )}
               </div>
               <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  onClick={handlePreviousDay}
-                >
+                <Button variant="outline" onClick={handlePreviousDay}>
                   Previous Day
                 </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={handleNextDay}
-                >
+                <Button variant="outline" onClick={handleNextDay}>
                   Next Day
                 </Button>
               </div>
