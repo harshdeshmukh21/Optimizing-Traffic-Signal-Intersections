@@ -48,12 +48,32 @@ const Maps = () => {
     duration: string;
   } | null>(null);
   const [currentTime, setCurrentTime] = useState("");
+  const [optimizationResult, setOptimizationResult] = useState<{
+    optimized_green_times: number[];
+    optimized_red_times: number[];
+    estimated_delay_time: number;
+    intersection_type: string;
+  } | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizationError, setOptimizationError] = useState<string | null>(
+    null
+  );
+  const [trafficCondition, setTrafficCondition] = useState("red"); // New state for traffic condition
 
   // Form state for intersection configuration
   const [intersectionType, setIntersectionType] = useState("fourway");
-  const [greenTiming1, setGreenTiming1] = useState("30");
-  const [greenTiming2, setGreenTiming2] = useState("30");
-  const [greenTiming3, setGreenTiming3] = useState("30");
+  const [greenTimings, setGreenTimings] = useState({
+    timing1: "30",
+    timing2: "30",
+    timing3: "30",
+    timing4: "30",
+  });
+  const [redTimings, setRedTimings] = useState({
+    timing1: "30",
+    timing2: "30",
+    timing3: "30",
+    timing4: "30",
+  });
 
   // Reference to DirectionsService
   const directionsServiceRef = useRef<google.maps.DirectionsService | null>(
@@ -74,16 +94,23 @@ const Maps = () => {
       };
 
       setSelectedIntersections((prev) => {
-        // Only keep up to 2 intersections
-        const newIntersections =
-          prev.length < 2 ? [...prev, latLng] : [prev[0], latLng]; // Replace the second one if already have 2
-
-        // If we have exactly 2 intersections, calculate route
-        if (newIntersections.length === 2) {
-          calculateRoute(newIntersections[0], newIntersections[1]);
+        // Add new intersection if less than 2 are selected
+        if (prev.length < 2) {
+          const newIntersections = [...prev, latLng];
+          if (newIntersections.length === 2) {
+            calculateRoute(newIntersections[0], newIntersections[1]);
+          } else {
+            setDirections(null);
+            setDistanceInfo(null);
+          }
+          return newIntersections;
         }
-
-        return newIntersections;
+        // Replace the last selected intersection if 2 are already selected
+        else {
+          const newIntersections = [prev[0], latLng];
+          calculateRoute(newIntersections[0], newIntersections[1]);
+          return newIntersections;
+        }
       });
     }
   }, []);
@@ -118,6 +145,8 @@ const Maps = () => {
 
           // Open the drawer with the information
           setIsDrawerOpen(true);
+          setOptimizationResult(null); // Clear previous optimization results
+          setOptimizationError(null);
         }
       } else {
         console.error("Directions request failed due to " + status);
@@ -125,16 +154,74 @@ const Maps = () => {
     });
   };
 
-  const handleSaveIntersection = () => {
-    console.log("Saving intersection configuration:", {
-      intersections: selectedIntersections,
-      type: intersectionType,
-      greenTimings: [greenTiming1, greenTiming2, greenTiming3],
-      distance: distanceInfo?.distance,
-      duration: distanceInfo?.duration,
-    });
+  const handleOptimizeIntersection = async () => {
+    if (!distanceInfo) {
+      console.error("Distance information not available.");
+      return;
+    }
 
-    setIsDrawerOpen(false);
+    setIsOptimizing(true);
+    setOptimizationError(null);
+
+    // Filter out empty timings based on intersection type
+    const greenTimesArray = Object.values(greenTimings)
+      .slice(0, intersectionType === "threeway" ? 3 : 4)
+      .map(Number);
+
+    const redTimesArray = Object.values(redTimings)
+      .slice(0, intersectionType === "threeway" ? 3 : 4)
+      .map(Number);
+
+    try {
+      const response = await fetch("http://localhost:5001/optimize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          color: trafficCondition, // Now using the selected traffic condition
+          green_times: greenTimesArray,
+          red_times: redTimesArray,
+          intersection_type:
+            intersectionType === "fourway"
+              ? "Four-Way"
+              : intersectionType === "threeway"
+              ? "T-Junction"
+              : intersectionType === "diamond"
+              ? "Diamond"
+              : "Roundabout",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+      setOptimizationResult(data);
+    } catch (error: any) {
+      console.error("Optimization error:", error);
+      setOptimizationError(error.message);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
+  const handleGreenTimingChange = (timingId: string, value: string) => {
+    setGreenTimings((prev) => ({
+      ...prev,
+      [timingId]: value,
+    }));
+  };
+
+  const handleRedTimingChange = (timingId: string, value: string) => {
+    setRedTimings((prev) => ({
+      ...prev,
+      [timingId]: value,
+    }));
   };
 
   const resetSelections = () => {
@@ -142,6 +229,8 @@ const Maps = () => {
     setDirections(null);
     setDistanceInfo(null);
     setIsDrawerOpen(false);
+    setOptimizationResult(null);
+    setOptimizationError(null);
   };
 
   return (
@@ -205,24 +294,56 @@ const Maps = () => {
             )}
 
             <div className="space-y-6">
+              {/* Traffic Condition Selector - New Addition */}
+              <div className="space-y-2">
+                <h3 className="font-medium">Traffic Condition</h3>
+                <RadioGroup
+                  value={trafficCondition}
+                  onValueChange={setTrafficCondition}
+                  className="flex space-x-4"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="red" id="red" />
+                    <Label htmlFor="red">Heavy (Red)</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="yellow" id="yellow" />
+                    <Label htmlFor="yellow">Moderate (Yellow)</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="green" id="green" />
+                    <Label htmlFor="green">Light (Green)</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
               <div>
                 <h3 className="font-medium mb-2">Intersection Type</h3>
                 <RadioGroup
                   value={intersectionType}
-                  onValueChange={setIntersectionType}
+                  onValueChange={(value) => {
+                    setIntersectionType(value);
+                    // Reset optimization results when type changes
+                    setOptimizationResult(null);
+                    setOptimizationError(null);
+                  }}
                   className="flex space-x-4"
                 >
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="fourway" id="fourway" />
-                    <Label htmlFor="fourway">Four-way</Label>
+                    <Label htmlFor="fourway">Four-Way</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <RadioGroupItem value="threeway" id="threeway" />
-                    <Label htmlFor="threeway">Three-way</Label>
+                    <Label htmlFor="threeway">T-Junction</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="twoway" id="twoway" />
-                    <Label htmlFor="twoway">Two-way</Label>
+                    <RadioGroupItem value="diamond" id="diamond" />
+                    <Label htmlFor="diamond">Diamond</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="roundabout" id="roundabout" />
+                    <Label htmlFor="roundabout">Roundabout</Label>
                   </div>
                 </RadioGroup>
               </div>
@@ -230,49 +351,179 @@ const Maps = () => {
               <div className="space-y-4">
                 <h3 className="font-medium">Green Signal Timings (seconds)</h3>
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-4 gap-4">
                   <div>
-                    <Label htmlFor="timing1">Direction 1</Label>
+                    <Label htmlFor="green_timing1">Direction 1</Label>
                     <Input
-                      id="timing1"
+                      id="green_timing1"
                       type="number"
-                      value={greenTiming1}
-                      onChange={(e) => setGreenTiming1(e.target.value)}
+                      value={greenTimings.timing1}
+                      onChange={(e) =>
+                        handleGreenTimingChange("timing1", e.target.value)
+                      }
                       min="10"
                       max="120"
                     />
                   </div>
 
                   <div>
-                    <Label htmlFor="timing2">Direction 2</Label>
+                    <Label htmlFor="green_timing2">Direction 2</Label>
                     <Input
-                      id="timing2"
+                      id="green_timing2"
                       type="number"
-                      value={greenTiming2}
-                      onChange={(e) => setGreenTiming2(e.target.value)}
+                      value={greenTimings.timing2}
+                      onChange={(e) =>
+                        handleGreenTimingChange("timing2", e.target.value)
+                      }
                       min="10"
                       max="120"
                     />
                   </div>
 
                   <div>
-                    <Label htmlFor="timing3">Direction 3</Label>
+                    <Label htmlFor="green_timing3">Direction 3</Label>
                     <Input
-                      id="timing3"
+                      id="green_timing3"
                       type="number"
-                      value={greenTiming3}
-                      onChange={(e) => setGreenTiming3(e.target.value)}
+                      value={greenTimings.timing3}
+                      onChange={(e) =>
+                        handleGreenTimingChange("timing3", e.target.value)
+                      }
                       min="10"
                       max="120"
                     />
                   </div>
+
+                  {intersectionType !== "threeway" && (
+                    <div>
+                      <Label htmlFor="green_timing4">Direction 4</Label>
+                      <Input
+                        id="green_timing4"
+                        type="number"
+                        value={greenTimings.timing4}
+                        onChange={(e) =>
+                          handleGreenTimingChange("timing4", e.target.value)
+                        }
+                        min="10"
+                        max="120"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="font-medium">Red Signal Timings (seconds)</h3>
+
+                <div className="grid grid-cols-4 gap-4">
+                  <div>
+                    <Label htmlFor="red_timing1">Direction 1</Label>
+                    <Input
+                      id="red_timing1"
+                      type="number"
+                      value={redTimings.timing1}
+                      onChange={(e) =>
+                        handleRedTimingChange("timing1", e.target.value)
+                      }
+                      min="10"
+                      max="120"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="red_timing2">Direction 2</Label>
+                    <Input
+                      id="red_timing2"
+                      type="number"
+                      value={redTimings.timing2}
+                      onChange={(e) =>
+                        handleRedTimingChange("timing2", e.target.value)
+                      }
+                      min="10"
+                      max="120"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="red_timing3">Direction 3</Label>
+                    <Input
+                      id="red_timing3"
+                      type="number"
+                      value={redTimings.timing3}
+                      onChange={(e) =>
+                        handleRedTimingChange("timing3", e.target.value)
+                      }
+                      min="10"
+                      max="120"
+                    />
+                  </div>
+
+                  {intersectionType !== "threeway" && (
+                    <div>
+                      <Label htmlFor="red_timing4">Direction 4</Label>
+                      <Input
+                        id="red_timing4"
+                        type="number"
+                        value={redTimings.timing4}
+                        onChange={(e) =>
+                          handleRedTimingChange("timing4", e.target.value)
+                        }
+                        min="10"
+                        max="120"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
+
+            {optimizationResult && (
+              <div className="mt-6 space-y-2">
+                <h3 className="font-medium">Optimization Result</h3>
+                <div className="flex justify-between">
+                  <Badge variant="secondary">Optimized Green Timings</Badge>
+                  <span>
+                    {optimizationResult.optimized_green_times.join(", ")} s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <Badge variant="secondary">Optimized Red Timings</Badge>
+                  <span>
+                    {optimizationResult.optimized_red_times.join(", ")} s
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <Badge variant="secondary">Estimated Delay</Badge>
+                  <span>{optimizationResult.estimated_delay_time} s</span>
+                </div>
+                <div className="flex justify-between">
+                  <Badge variant="secondary">Intersection Type</Badge>
+                  <span>{optimizationResult.intersection_type}</span>
+                </div>
+              </div>
+            )}
+
+            {optimizationError && (
+              <Alert variant="destructive" className="mt-4">
+                <AlertTitle>Optimization Error</AlertTitle>
+                <AlertDescription>{optimizationError}</AlertDescription>
+              </Alert>
+            )}
           </div>
 
           <DrawerFooter>
-            <Button onClick={handleSaveIntersection}>Save Configuration</Button>
+            <Button
+              onClick={handleOptimizeIntersection}
+              disabled={isOptimizing}
+            >
+              {isOptimizing ? (
+                <>
+                  Optimizing <Loader2 className="ml-2 h-4 w-4 animate-spin" />
+                </>
+              ) : (
+                "Optimize Timings"
+              )}
+            </Button>
             <DrawerClose asChild>
               <Button variant="outline">Cancel</Button>
             </DrawerClose>
