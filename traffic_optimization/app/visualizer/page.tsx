@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import React from "react";
 import { ArrowLeft, BarChart2 } from "lucide-react";
 import {
   Bar,
@@ -10,6 +11,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  ResponsiveContainer,
 } from "recharts";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
@@ -30,7 +32,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -41,134 +42,109 @@ interface SignalData {
   Day: string;
   Hour: number;
   Signal_1_Green: number;
+  Signal_1_Red: number;
   Signal_2_Green: number;
+  Signal_2_Red: number;
   Signal_3_Green?: number;
+  Signal_3_Red?: number;
   Signal_4_Green?: number;
+  Signal_4_Red?: number;
+  Signal_5_Green?: number;
+  Signal_5_Red?: number;
+  Signal_6_Green?: number;
+  Signal_6_Red?: number;
+  Signal_1_Timings?: string;
+  Signal_2_Timings?: string;
+  Signal_3_Timings?: string;
+  Signal_4_Timings?: string;
+  Signal_5_Timings?: string;
+  Signal_6_Timings?: string;
   Avg_Queue_Length: number;
   Avg_Delay_Time: number;
-  Original_Queue_Length: number;
-  Original_Delay_Time: number;
+  Original_Queue_Length?: number;
+  Original_Delay_Time?: number;
 }
 
-interface CSVData {
-  headers: string[];
-  rows: string[][];
+interface VisualizationData {
+  optimizedResults: SignalData[];
+  intersectionType: string;
+  fileName: string;
 }
+
+const days = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
+const parseTimings = (timingString?: string) => {
+  if (!timingString) return { green: 0, red: 0 };
+
+  // Handle both "G:34|R:80" and "G:34|R:80" formats
+  const greenMatch = timingString.match(/G:(\d+)/);
+  const redMatch = timingString.match(/R:(\d+)/);
+
+  return {
+    green: greenMatch ? parseInt(greenMatch[1]) : 0,
+    red: redMatch ? parseInt(redMatch[1]) : 0,
+  };
+};
 
 export default function Visualizer() {
   const [chartData, setChartData] = useState<SignalData[]>([]);
   const [currentDayIndex, setCurrentDayIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [intersectionType, setIntersectionType] = useState<string>("Four-Way");
+  const [fileName, setFileName] = useState<string>("traffic_data.csv");
   const router = useRouter();
 
-  const days = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-  ];
-
-  // Function to check for storage changes
-  const checkStorageChanges = () => {
-    try {
-      const savedParsedData = localStorage.getItem("parsedCSVData");
-
-      if (!savedParsedData) {
-        setChartData([]);
-        setError("No optimization data found. Please upload a file.");
-        return;
-      }
-
-      const parsedData: CSVData = JSON.parse(savedParsedData);
-      transformDataForChart(parsedData);
-    } catch (error) {
-      console.error("Error checking storage changes:", error);
-      setError("Error loading optimization data.");
-    }
-  };
-
-  // Initial data loading
   useEffect(() => {
-    try {
-      const savedRawCSV = localStorage.getItem("optimizedCSVData");
-      const savedParsedData = localStorage.getItem("parsedCSVData");
+    const loadData = () => {
+      try {
+        const savedData = localStorage.getItem("visualizationData");
+        if (savedData) {
+          const parsedData: VisualizationData = JSON.parse(savedData);
+          // Process the data to extract original timings
+          const processedData = parsedData.optimizedResults.map((data) => {
+            const processed: any = { ...data };
 
-      if (savedParsedData) {
-        const parsedData: CSVData = JSON.parse(savedParsedData);
-        transformDataForChart(parsedData);
-      } else if (savedRawCSV) {
-        processCSV(savedRawCSV);
-      } else {
-        setError("No optimization data found. Please upload a file.");
+            // Extract original timings from the Timings fields if they exist
+            for (let i = 1; i <= 6; i++) {
+              const timingKey = `Signal_${i}_Timings` as keyof SignalData;
+              if (data[timingKey]) {
+                const { green, red } = parseTimings(data[timingKey] as string);
+                processed[`Signal_${i}_Original_Green`] = green;
+                processed[`Signal_${i}_Original_Red`] = red;
+              }
+            }
+
+            return processed as SignalData;
+          });
+
+          setChartData(processedData);
+          setIntersectionType(parsedData.intersectionType);
+          setFileName(parsedData.fileName);
+          setError(null);
+        } else {
+          setError(
+            "No visualization data found. Please upload and optimize a file first."
+          );
+        }
+      } catch (err) {
+        console.error("Error loading visualization data:", err);
+        setError("Error loading visualization data.");
+      } finally {
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error("Error loading data:", error);
-      setError("Error loading optimization data.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Listen for storage events to update the visualization when dataset is removed
-  useEffect(() => {
-    window.addEventListener("storage", (e) => {
-      if (e.key === "parsedCSVData" || e.key === null) {
-        checkStorageChanges();
-      }
-    });
-
-    const interval = setInterval(checkStorageChanges, 1000);
-
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("storage", checkStorageChanges);
     };
+
+    loadData();
   }, []);
-
-  const processCSV = (csvText: string) => {
-    try {
-      const lines = csvText.trim().split("\n");
-      const headers = lines[0].split(",").map((h) => h.trim());
-      const rows = lines
-        .slice(1)
-        .map((line) => line.split(",").map((cell) => cell.trim()));
-
-      const parsedData: CSVData = { headers, rows };
-      localStorage.setItem("parsedCSVData", JSON.stringify(parsedData));
-      transformDataForChart(parsedData);
-    } catch (error) {
-      console.error("Error parsing CSV:", error);
-      setError("Error parsing CSV data. Please check the format.");
-    }
-  };
-
-  const transformDataForChart = (parsedData: CSVData) => {
-    const { headers, rows } = parsedData;
-
-    const data: SignalData[] = rows.map((row) => ({
-      Day: row[0],
-      Hour: parseInt(row[1]),
-      Signal_1_Green: parseInt(row[2]),
-      Signal_2_Green: parseInt(row[3]),
-      Signal_3_Green: row[4] ? parseInt(row[4]) : undefined,
-      Signal_4_Green: row[5] ? parseInt(row[5]) : undefined,
-      Avg_Queue_Length: parseFloat(row[6]),
-      Avg_Delay_Time: parseFloat(row[7]),
-      Original_Queue_Length: parseFloat(row[8]) || 0,
-      Original_Delay_Time: parseFloat(row[9]) || 0,
-    }));
-
-    if (data.length > 0) {
-      setChartData(data);
-      setError(null);
-    } else {
-      setError("No valid data found in the CSV file.");
-    }
-  };
 
   const handleNextDay = () => {
     setCurrentDayIndex((prevIndex) => (prevIndex + 1) % days.length);
@@ -187,6 +163,119 @@ export default function Visualizer() {
   const filteredData = chartData.filter(
     (data) => data.Day === days[currentDayIndex]
   );
+
+  const signalCount =
+    intersectionType === "T-Junction"
+      ? 3
+      : intersectionType === "Diamond"
+      ? 6
+      : 4;
+
+  const renderSignalGreenComparison = (signalNumber: number) => {
+    return (
+      <Card key={`signal-${signalNumber}-green`}>
+        <CardHeader>
+          <CardTitle>Signal {signalNumber} Green Time Comparison</CardTitle>
+          <CardDescription>
+            Current vs Optimized green times for Signal {signalNumber} on{" "}
+            {days[currentDayIndex]}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="h-[400px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={filteredData}
+              margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="Hour"
+                tick={{ fontSize: 12 }}
+                interval={0}
+                angle={-45}
+                textAnchor="end"
+                height={80}
+              />
+              <YAxis
+                label={{
+                  value: "Time (seconds)",
+                  angle: -90,
+                  position: "insideLeft",
+                  style: { textAnchor: "middle" },
+                }}
+              />
+              <Tooltip />
+              <Legend />
+              <Bar
+                dataKey={`Signal_${signalNumber}_Original_Green`}
+                fill="#8884d8"
+                name={`Original Green`}
+                opacity={0.7}
+              />
+              <Bar
+                dataKey={`Signal_${signalNumber}_Green`}
+                fill="#82ca9d"
+                name={`Optimized Green`}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const renderSignalRedComparison = (signalNumber: number) => {
+    return (
+      <Card key={`signal-${signalNumber}-red`}>
+        <CardHeader>
+          <CardTitle>Signal {signalNumber} Red Time Comparison</CardTitle>
+          <CardDescription>
+            Current vs Optimized red times for Signal {signalNumber} on{" "}
+            {days[currentDayIndex]}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="h-[400px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={filteredData}
+              margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="Hour"
+                tick={{ fontSize: 12 }}
+                interval={0}
+                angle={-45}
+                textAnchor="end"
+                height={80}
+              />
+              <YAxis
+                label={{
+                  value: "Time (seconds)",
+                  angle: -90,
+                  position: "insideLeft",
+                  style: { textAnchor: "middle" },
+                }}
+              />
+              <Tooltip />
+              <Legend />
+              <Bar
+                dataKey={`Signal_${signalNumber}_Original_Red`}
+                fill="#ffc658"
+                name={`Original Red`}
+                opacity={0.7}
+              />
+              <Bar
+                dataKey={`Signal_${signalNumber}_Red`}
+                fill="#ff8042"
+                name={`Optimized Red`}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <SidebarProvider>
@@ -233,110 +322,27 @@ export default function Visualizer() {
                     Active
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Data is loaded and visualization is active
+                    {fileName} ({intersectionType}, {days[currentDayIndex]})
                   </p>
                 </CardContent>
               </Card>
             </div>
           )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Green Signal Time Comparison</CardTitle>
-              <CardDescription>
-                Comparing original and optimized green signal durations for{" "}
-                {days[currentDayIndex]}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="flex justify-center items-center h-64">
-                  <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-                </div>
-              ) : error ? (
-                <div className="flex flex-col items-center justify-center h-64 gap-4">
-                  <BarChart2 className="h-12 w-12 text-gray-300" />
-                  <p className="text-gray-500">{error}</p>
-                  <Button
-                    variant="outline"
-                    onClick={navigateToUpload}
-                    className="mt-2"
-                  >
-                    Go to Upload Page
-                  </Button>
-                </div>
-              ) : filteredData.length > 0 ? (
-                <div className="w-full overflow-x-auto">
-                  <BarChart
-                    width={800}
-                    height={400}
-                    data={filteredData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="Hour"
-                      tick={{ fontSize: 12 }}
-                      interval={0}
-                      angle={-45}
-                      textAnchor="end"
-                      height={80}
-                    />
-                    <YAxis
-                      label={{
-                        value: "Time (seconds)",
-                        angle: -90,
-                        position: "insideLeft",
-                        style: { textAnchor: "middle" },
-                      }}
-                    />
-                    <Tooltip />
-                    <Legend />
-                    <Bar
-                      dataKey="Signal_1_Green"
-                      fill="#8884d8"
-                      name="Signal 1 Green"
-                    />
-                    <Bar
-                      dataKey="Signal_2_Green"
-                      fill="#82ca9d"
-                      name="Signal 2 Green"
-                    />
-                  </BarChart>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-64 gap-4">
-                  <BarChart2 className="h-12 w-12 text-gray-300" />
-                  <p className="text-gray-500">No data to display</p>
-                  <Button
-                    variant="outline"
-                    onClick={navigateToUpload}
-                    className="mt-2"
-                  >
-                    Go to Upload Page
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-            <CardFooter className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 text-sm">
-              <div className="flex gap-2 font-medium leading-none">
-                {filteredData.length > 0 ? (
-                  <>Data Visualization Complete</>
-                ) : (
-                  "Upload a CSV file to visualize data"
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={handlePreviousDay}>
-                  Previous Day
-                </Button>
-                <Button variant="outline" onClick={handleNextDay}>
-                  Next Day
-                </Button>
-              </div>
-            </CardFooter>
-          </Card>
+          {/* Signal Timing Comparisons in 2-column grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Array.from({ length: signalCount }).map((_, i) => {
+              const signalNumber = i + 1;
+              return (
+                <React.Fragment key={`signal-${signalNumber}`}>
+                  {renderSignalGreenComparison(signalNumber)}
+                  {renderSignalRedComparison(signalNumber)}
+                </React.Fragment>
+              );
+            })}
+          </div>
 
+          {/* Average Queue Length Comparison (unchanged) */}
           <Card>
             <CardHeader>
               <CardTitle>Average Queue Length Comparison</CardTitle>
@@ -345,14 +351,12 @@ export default function Visualizer() {
                 {days[currentDayIndex]}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="h-[400px]">
               {filteredData.length > 0 ? (
-                <div className="w-full overflow-x-auto">
+                <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    width={800}
-                    height={400}
                     data={filteredData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
@@ -384,33 +388,17 @@ export default function Visualizer() {
                       name="Optimized Queue Length"
                     />
                   </BarChart>
-                </div>
+                </ResponsiveContainer>
               ) : (
-                <div className="flex flex-col items-center justify-center h-64 gap-4">
+                <div className="flex flex-col items-center justify-center h-full gap-4">
                   <BarChart2 className="h-12 w-12 text-gray-300" />
                   <p className="text-gray-500">No data to display</p>
                 </div>
               )}
             </CardContent>
-            <CardFooter className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 text-sm">
-              <div className="flex gap-2 font-medium leading-none">
-                {filteredData.length > 0 ? (
-                  <>Data Visualization Complete</>
-                ) : (
-                  "Upload a CSV file to visualize data"
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={handlePreviousDay}>
-                  Previous Day
-                </Button>
-                <Button variant="outline" onClick={handleNextDay}>
-                  Next Day
-                </Button>
-              </div>
-            </CardFooter>
           </Card>
 
+          {/* Average Delay Time Comparison (unchanged) */}
           <Card>
             <CardHeader>
               <CardTitle>Average Delay Time Comparison</CardTitle>
@@ -419,14 +407,12 @@ export default function Visualizer() {
                 {days[currentDayIndex]}
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="h-[400px]">
               {filteredData.length > 0 ? (
-                <div className="w-full overflow-x-auto">
+                <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    width={800}
-                    height={400}
                     data={filteredData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis
@@ -458,32 +444,24 @@ export default function Visualizer() {
                       name="Optimized Delay Time"
                     />
                   </BarChart>
-                </div>
+                </ResponsiveContainer>
               ) : (
-                <div className="flex flex-col items-center justify-center h-64 gap-4">
+                <div className="flex flex-col items-center justify-center h-full gap-4">
                   <BarChart2 className="h-12 w-12 text-gray-300" />
                   <p className="text-gray-500">No data to display</p>
                 </div>
               )}
             </CardContent>
-            <CardFooter className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 text-sm">
-              <div className="flex gap-2 font-medium leading-none">
-                {filteredData.length > 0 ? (
-                  <>Data Visualization Complete</>
-                ) : (
-                  "Upload a CSV file to visualize data"
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={handlePreviousDay}>
-                  Previous Day
-                </Button>
-                <Button variant="outline" onClick={handleNextDay}>
-                  Next Day
-                </Button>
-              </div>
-            </CardFooter>
           </Card>
+
+          <div className="flex justify-center gap-4">
+            <Button variant="outline" onClick={handlePreviousDay}>
+              Previous Day
+            </Button>
+            <Button variant="outline" onClick={handleNextDay}>
+              Next Day
+            </Button>
+          </div>
         </div>
       </SidebarInset>
     </SidebarProvider>

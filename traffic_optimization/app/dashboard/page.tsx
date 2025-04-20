@@ -19,9 +19,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, Clock, Users, Activity } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 
-interface RadarDataItem {
+// Define the RadarDataItem interface directly in this file since the import is failing
+export interface RadarDataItem {
   parameter: string;
-  [key: string]: string | number;
+  before: number;
+  after: number;
 }
 
 export default function Dashboard() {
@@ -29,73 +31,77 @@ export default function Dashboard() {
   const [selectedIntersection, setSelectedIntersection] =
     useState<string>("Four-Way");
   const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Load data on component mount and update when localStorage changes
   useEffect(() => {
-    // Initial load
+    const loadDataFromLocalStorage = () => {
+      try {
+        const savedRadarData = localStorage.getItem("radarChartData");
+        if (savedRadarData) {
+          setRadarData(JSON.parse(savedRadarData));
+        }
+
+        const savedIntersectionType = localStorage.getItem("intersectionType");
+        if (savedIntersectionType) {
+          setSelectedIntersection(savedIntersectionType);
+        }
+
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Error loading data from localStorage:", error);
+        setIsLoading(false);
+      }
+    };
+
     loadDataFromLocalStorage();
 
-    // Create a function to check for updates
-    const checkForUpdates = () => {
-      const newLastUpdated = localStorage.getItem("lastUpdated");
-      if (newLastUpdated && newLastUpdated !== lastUpdated) {
-        setLastUpdated(newLastUpdated);
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "radarChartData" || e.key === "intersectionType") {
         loadDataFromLocalStorage();
       }
     };
 
-    // Check every second for changes (you could adjust this interval)
-    const intervalId = setInterval(checkForUpdates, 1000);
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
 
-    // Cleanup the interval on component unmount
-    return () => clearInterval(intervalId);
-  }, [lastUpdated]);
-
-  const loadDataFromLocalStorage = () => {
-    try {
-      // Load radar data
-      const savedRadarData = localStorage.getItem("radarChartData");
-      if (savedRadarData) {
-        setRadarData(JSON.parse(savedRadarData));
-      }
-
-      // Get intersection type if available
-      const savedIntersectionType = localStorage.getItem("intersectionType");
-      if (savedIntersectionType) {
-        setSelectedIntersection(savedIntersectionType);
-      }
-    } catch (error) {
-      console.error("Error loading data from localStorage:", error);
-    }
-  };
-
-  // Calculate summary metrics from radar data
   const calculateMetrics = () => {
-    if (radarData.length === 0) return { vehicles: 0, delay: 0, queue: 0 };
+    if (radarData.length === 0)
+      return {
+        vehicles: 0,
+        delay: 0,
+        queue: 0,
+        improvedDelay: 0,
+        improvedQueue: 0,
+      };
 
     const vehicles =
-      radarData.find((item) => item.parameter === "Total_Vehicles")?.value || 0;
-    const delay =
-      radarData.find((item) => item.parameter === "Avg_Delay_Time")?.value || 0;
-    const queue =
-      radarData.find((item) => item.parameter === "Avg_Queue_Length")?.value ||
+      radarData.find((item) => item.parameter === "Total_Vehicles")?.before ||
       0;
+    const delay =
+      radarData.find((item) => item.parameter === "Avg_Delay_Time")?.before ||
+      0;
+    const queue =
+      radarData.find((item) => item.parameter === "Avg_Queue_Length")?.before ||
+      0;
+    const improvedDelay =
+      radarData.find((item) => item.parameter === "Avg_Delay_Time")?.after ||
+      delay;
+    const improvedQueue =
+      radarData.find((item) => item.parameter === "Avg_Queue_Length")?.after ||
+      queue;
 
     return {
-      vehicles:
-        typeof vehicles === "number"
-          ? vehicles
-          : parseFloat(vehicles as string) || 0,
-      delay:
-        typeof delay === "number" ? delay : parseFloat(delay as string) || 0,
-      queue:
-        typeof queue === "number" ? queue : parseFloat(queue as string) || 0,
+      vehicles,
+      delay,
+      queue,
+      improvedDelay,
+      improvedQueue,
     };
   };
 
   const metrics = calculateMetrics();
 
-  // Calculate the improvement percentages for signal timings
   const calculateImprovements = () => {
     const improvements: Array<{
       name: string;
@@ -105,26 +111,17 @@ export default function Dashboard() {
     }> = [];
 
     radarData
-      .filter(
-        (item) =>
-          item.parameter.includes("Signal") &&
-          item.parameter.includes("Timings")
-      )
+      .filter((item) => item.parameter.includes("Signal"))
       .forEach((signal) => {
-        const before =
-          typeof signal.before === "number"
-            ? signal.before
-            : parseFloat(signal.before as string) || 0;
-        const after =
-          typeof signal.after === "number"
-            ? signal.after
-            : parseFloat(signal.after as string) || 0;
-        const change = before > 0 ? ((after - before) / before) * 100 : 0;
+        const change =
+          signal.before > 0
+            ? ((signal.after - signal.before) / signal.before) * 100
+            : 0;
 
         improvements.push({
           name: signal.parameter.replace("_", " "),
-          before,
-          after,
+          before: signal.before,
+          after: signal.after,
           change,
         });
       });
@@ -133,6 +130,34 @@ export default function Dashboard() {
   };
 
   const signalImprovements = calculateImprovements();
+
+  const getImprovementPercentage = (before: number, after: number) => {
+    return before > 0 ? ((before - after) / before) * 100 : 0;
+  };
+
+  if (isLoading) {
+    return (
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbPage>Dashboard</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </header>
+          <div className="flex items-center justify-center h-full">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
+    );
+  }
 
   return (
     <SidebarProvider>
@@ -179,7 +204,11 @@ export default function Dashboard() {
                   {metrics.delay.toFixed(1)} sec
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Average wait time per vehicle
+                  {getImprovementPercentage(
+                    metrics.delay,
+                    metrics.improvedDelay
+                  ).toFixed(1)}
+                  % improvement
                 </p>
               </CardContent>
             </Card>
@@ -195,7 +224,11 @@ export default function Dashboard() {
                   {metrics.queue.toFixed(1)}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Average vehicles in queue
+                  {getImprovementPercentage(
+                    metrics.queue,
+                    metrics.improvedQueue
+                  ).toFixed(1)}
+                  % improvement
                 </p>
               </CardContent>
             </Card>
@@ -243,8 +276,18 @@ export default function Dashboard() {
                           </span>
                         </div>
                         <div className="flex justify-between text-xs text-muted-foreground">
-                          <span>Before: {signal.before.toFixed(1)}</span>
-                          <span>After: {signal.after.toFixed(1)}</span>
+                          <span>
+                            Before:{" "}
+                            {typeof signal.before === "number"
+                              ? signal.before.toFixed(1)
+                              : "0.0"}
+                          </span>
+                          <span>
+                            After:{" "}
+                            {typeof signal.after === "number"
+                              ? signal.after.toFixed(1)
+                              : "0.0"}
+                          </span>
                         </div>
                         <Progress
                           value={signal.after}
@@ -256,7 +299,6 @@ export default function Dashboard() {
                       </div>
                     ))}
 
-                    {/* Summary section */}
                     <div className="pt-4 border-t">
                       <h3 className="text-sm font-medium mb-2">
                         Overall Performance
@@ -267,13 +309,10 @@ export default function Dashboard() {
                             Avg. Delay Reduction
                           </p>
                           <p className="text-lg font-semibold">
-                            {metrics.delay > 0
-                              ? (
-                                  ((metrics.delay - metrics.delay * 0.8) /
-                                    (metrics.delay * 0.8)) *
-                                  100
-                                ).toFixed(1)
-                              : 0}
+                            {getImprovementPercentage(
+                              metrics.delay,
+                              metrics.improvedDelay
+                            ).toFixed(1)}
                             %
                           </p>
                         </div>
@@ -282,13 +321,10 @@ export default function Dashboard() {
                             Avg. Queue Reduction
                           </p>
                           <p className="text-lg font-semibold">
-                            {metrics.queue > 0
-                              ? (
-                                  ((metrics.queue - metrics.queue * 0.85) /
-                                    (metrics.queue * 0.85)) *
-                                  100
-                                ).toFixed(1)
-                              : 0}
+                            {getImprovementPercentage(
+                              metrics.queue,
+                              metrics.improvedQueue
+                            ).toFixed(1)}
                             %
                           </p>
                         </div>
@@ -304,7 +340,6 @@ export default function Dashboard() {
             </Card>
           </div>
 
-          {/* Additional section for historical data comparison */}
           {radarData.length > 0 && (
             <Card>
               <CardHeader>
@@ -322,16 +357,10 @@ export default function Dashboard() {
                     {radarData
                       .filter((item) => !item.parameter.includes("Signal"))
                       .map((param, index) => {
-                        const before =
-                          typeof param.before === "number"
-                            ? param.before
-                            : parseFloat(param.before as string) || 0;
-                        const after =
-                          typeof param.after === "number"
-                            ? param.after
-                            : parseFloat(param.after as string) || 0;
-                        const change =
-                          before > 0 ? ((after - before) / before) * 100 : 0;
+                        const change = getImprovementPercentage(
+                          param.before,
+                          param.after
+                        );
 
                         return (
                           <div
@@ -354,13 +383,23 @@ export default function Dashboard() {
                             </div>
                             <div className="mt-2">
                               <Progress
-                                value={after}
-                                max={Math.max(before, after) * 1.2}
+                                value={param.after}
+                                max={Math.max(param.before, param.after) * 1.2}
                               />
                             </div>
                             <div className="flex justify-between mt-1 text-xs text-muted-foreground">
-                              <span>Before: {before.toFixed(1)}</span>
-                              <span>After: {after.toFixed(1)}</span>
+                              <span>
+                                Before:{" "}
+                                {typeof param.before === "number"
+                                  ? param.before.toFixed(1)
+                                  : "0.0"}
+                              </span>
+                              <span>
+                                After:{" "}
+                                {typeof param.after === "number"
+                                  ? param.after.toFixed(1)
+                                  : "0.0"}
+                              </span>
                             </div>
                           </div>
                         );

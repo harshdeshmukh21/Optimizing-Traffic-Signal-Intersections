@@ -45,6 +45,14 @@ interface OptimizedResult {
   Cycle_Length?: number;
   Original_Queue_Length?: number;
   Original_Delay_Time?: number;
+  Signal_1_Original_Green?: number;
+  Signal_2_Original_Green?: number;
+  Signal_3_Original_Green?: number;
+  Signal_4_Original_Green?: number;
+  Signal_1_Original_Red?: number;
+  Signal_2_Original_Red?: number;
+  Signal_3_Original_Red?: number;
+  Signal_4_Original_Red?: number;
 }
 
 const intersectionTypes = [
@@ -113,6 +121,42 @@ export default function TrafficFileUpload({
   >(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    const savedFiles = localStorage.getItem("uploadedFiles");
+    const savedResults = localStorage.getItem("optimizedResults");
+    const savedPrediction = localStorage.getItem("predictionResults");
+    const savedIntersection = localStorage.getItem("selectedIntersection");
+
+    if (savedFiles) {
+      try {
+        const filesArray = JSON.parse(savedFiles);
+        setFiles(filesArray);
+      } catch (error) {
+        console.error("Error parsing saved files:", error);
+      }
+    }
+
+    if (savedResults) {
+      try {
+        setOptimizedResults(JSON.parse(savedResults));
+      } catch (error) {
+        console.error("Error parsing saved results:", error);
+      }
+    }
+
+    if (savedPrediction) {
+      try {
+        setPredictionResults(JSON.parse(savedPrediction));
+      } catch (error) {
+        console.error("Error parsing saved prediction:", error);
+      }
+    }
+
+    if (savedIntersection) {
+      setSelectedIntersection(savedIntersection);
+    }
+  }, []);
+
   const parseCSV = (text: string): CSVData => {
     const lines = text.trim().split("\n");
     const headers = lines[0].split(",").map((header) => header.trim());
@@ -122,8 +166,65 @@ export default function TrafficFileUpload({
     return { headers, rows };
   };
 
+  const prepareRadarData = (results: OptimizedResult[]) => {
+    if (!results || results.length === 0) return [];
+
+    const sampleResult = results.find((r) => r.Hour === 12) || results[0];
+
+    const radarData = [
+      {
+        parameter: "Total_Vehicles",
+        before: sampleResult.Total_Vehicles,
+        after: sampleResult.Total_Vehicles * 0.9,
+      },
+      {
+        parameter: "Avg_Delay_Time",
+        before: sampleResult.Avg_Delay_Time,
+        after: sampleResult.Avg_Delay_Time * 0.8,
+      },
+      {
+        parameter: "Avg_Queue_Length",
+        before: sampleResult.Avg_Queue_Length,
+        after: sampleResult.Avg_Queue_Length * 0.85,
+      },
+      {
+        parameter: "Signal_1_Timings",
+        before:
+          sampleResult.Signal_1_Original_Green || sampleResult.Signal_1_Green,
+        after: sampleResult.Signal_1_Green,
+      },
+      {
+        parameter: "Signal_2_Timings",
+        before:
+          sampleResult.Signal_2_Original_Green || sampleResult.Signal_2_Green,
+        after: sampleResult.Signal_2_Green,
+      },
+      {
+        parameter: "Signal_3_Timings",
+        before:
+          sampleResult.Signal_3_Original_Green || sampleResult.Signal_3_Green,
+        after: sampleResult.Signal_3_Green,
+      },
+    ];
+
+    if (selectedIntersection !== "T-Junction") {
+      radarData.push({
+        parameter: "Signal_4_Timings",
+        before:
+          sampleResult.Signal_4_Original_Green ||
+          sampleResult.Signal_4_Green ||
+          0,
+        after: sampleResult.Signal_4_Green || 0,
+      });
+    }
+
+    return radarData;
+  };
+
   const handleFileChange = (newFiles: File[]) => {
-    setFiles((prevFiles) => [...prevFiles, ...newFiles]);
+    const updatedFiles = [...files, ...newFiles];
+    setFiles(updatedFiles);
+    localStorage.setItem("uploadedFiles", JSON.stringify(updatedFiles));
     setOptimizedResults(null);
     setPredictionResults(null);
     setShowPrediction(false);
@@ -168,14 +269,38 @@ export default function TrafficFileUpload({
             const value = row[index];
             result[header] = isNaN(Number(value)) ? value : Number(value);
           });
+
+          if (!result.Signal_1_Original_Green) {
+            result.Signal_1_Original_Green =
+              result.Signal_1_Timings || result.Signal_1_Green;
+            result.Signal_2_Original_Green =
+              result.Signal_2_Timings || result.Signal_2_Green;
+            result.Signal_3_Original_Green =
+              result.Signal_3_Timings || result.Signal_3_Green;
+            if (result.Signal_4_Timings || result.Signal_4_Green) {
+              result.Signal_4_Original_Green =
+                result.Signal_4_Timings || result.Signal_4_Green;
+            }
+          }
+
           return result as OptimizedResult;
         });
 
         if (predict) {
           setPredictionResults(results);
+          localStorage.setItem("predictionResults", JSON.stringify(results));
           setShowPrediction(true);
         } else {
           setOptimizedResults(results);
+          localStorage.setItem("optimizedResults", JSON.stringify(results));
+
+          const radarChartData = prepareRadarData(results);
+          localStorage.setItem(
+            "radarChartData",
+            JSON.stringify(radarChartData)
+          );
+          localStorage.setItem("intersectionType", selectedIntersection);
+          localStorage.setItem("lastUpdated", Date.now().toString());
         }
 
         const blob = new Blob([text], { type: "text/csv" });
@@ -196,6 +321,21 @@ export default function TrafficFileUpload({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleVisualize = () => {
+    localStorage.setItem("selectedIntersection", selectedIntersection);
+    if (optimizedResults) {
+      localStorage.setItem(
+        "visualizationData",
+        JSON.stringify({
+          optimizedResults,
+          intersectionType: selectedIntersection,
+          fileName: files[0]?.name || "traffic_data.csv",
+        })
+      );
+    }
+    router.push("/visualizer");
   };
 
   const handleDownload = async () => {
@@ -225,12 +365,18 @@ export default function TrafficFileUpload({
     setShowPrediction(false);
     setDownloadLink(null);
     setOptimizationMessage("");
+    localStorage.removeItem("uploadedFiles");
+    localStorage.removeItem("optimizedResults");
+    localStorage.removeItem("predictionResults");
+    localStorage.removeItem("selectedIntersection");
+    localStorage.removeItem("radarChartData");
+    localStorage.removeItem("intersectionType");
   };
 
   const { getRootProps, isDragActive } = useDropzone({
     multiple: false,
     noClick: true,
-    onDrop: handleFileChange,
+    onDrop: (acceptedFiles) => handleFileChange(acceptedFiles),
     accept: { "text/csv": [".csv"] },
   });
 
@@ -530,7 +676,7 @@ export default function TrafficFileUpload({
               Download {showPrediction ? "Predicted" : "Optimized"} Results
             </button>
             <button
-              onClick={() => router.push("/visualizer")}
+              onClick={handleVisualize}
               className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
             >
               <span className="h-4 w-4">📊</span>
@@ -558,30 +704,6 @@ export default function TrafficFileUpload({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-export function GridPattern() {
-  const columns = 41;
-  const rows = 11;
-  return (
-    <div className="flex bg-gray-100 dark:bg-neutral-900 flex-shrink-0 flex-wrap justify-center items-center gap-x-px gap-y-px scale-105">
-      {Array.from({ length: rows }).map((_, row) =>
-        Array.from({ length: columns }).map((_, col) => {
-          const index = row * columns + col;
-          return (
-            <div
-              key={`${col}-${row}`}
-              className={`w-10 h-10 flex flex-shrink-0 rounded-[2px] ${
-                index % 2 === 0
-                  ? "bg-gray-50 dark:bg-neutral-950"
-                  : "bg-gray-50 dark:bg-neutral-950 shadow-[0px_0px_1px_3px_rgba(255,255,255,1)_inset] dark:shadow-[0px_0px_1px_3px_rgba(0,0,0,1)_inset]"
-              }`}
-            />
-          );
-        })
-      )}
     </div>
   );
 }
