@@ -4,16 +4,49 @@ import numpy as np
 import pandas as pd
 import os
 import tempfile
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
 
-def color_to_vehicle_count(color):
-    color_mapping = {"red": 60, "yellow": 40, "green": 10}
-    return color_mapping.get(color.lower(), 40)  # Default to yellow if unknown
+def color_to_vehicle_count(color, current_hour, current_travel_time, current_distance):
+    # Base traffic density based on color
+    base_density = {"red": 60, "yellow": 40, "green": 10}.get(color.lower(), 40)
+    
+    # Adjust based on time of day
+    if 7 <= current_hour <= 10 or 16 <= current_hour <= 19:  # Peak hours
+        base_density *= 1.3
+    elif 22 <= current_hour or current_hour <= 5:  # Late night/early morning
+        base_density *= 0.7
+    
+    # Adjust based on travel time and distance
+    try:
+        # Try to parse distance (could be "10 km" or "1,000 m")
+        distance_str = current_distance.lower().replace(',', '').replace(' ', '')
+        if 'km' in distance_str:
+            distance_km = float(distance_str.replace('km', ''))
+        elif 'm' in distance_str:
+            distance_km = float(distance_str.replace('m', '')) / 1000
+        else:
+            distance_km = float(distance_str)  # assume km
+        
+        # Calculate speed (km/h)
+        speed = distance_km / (current_travel_time / 3600)
+        
+        # Adjust density based on speed
+        if speed < 20:  # Heavy congestion
+            base_density *= 1.4
+        elif speed < 40:  # Moderate congestion
+            base_density *= 1.2
+        # else: light traffic, no adjustment
+        
+        return min(100, max(5, base_density))  # Keep within reasonable bounds
+    except:
+        return min(100, max(5, base_density))  # Fallback if parsing fails
 
-def calculate_optimized_timings(color, given_green_times, given_red_times, intersection_type):
-    vehicle_count = color_to_vehicle_count(color)
+def calculate_optimized_timings(color, given_green_times, given_red_times, intersection_type, 
+                              current_hour, current_travel_time, current_distance):
+    vehicle_count = color_to_vehicle_count(color, current_hour, current_travel_time, current_distance)
     num_signals = len(given_green_times)
 
     # Validate number of signals based on intersection type
@@ -24,74 +57,155 @@ def calculate_optimized_timings(color, given_green_times, given_red_times, inter
     elif intersection_type in ["Diamond", "Roundabout"] and num_signals != 4:
         raise ValueError(f"{intersection_type} requires exactly 4 signal timings")
 
-    optimized_green_times = []
-    optimized_red_times = []
-
-    # Base cycle times based on intersection type
-    base_cycle_times = {
-        "Four-Way": 120,
-        "T-Junction": 90,
-        "Diamond": 110,
-        "Roundabout": 100  # Typically shorter cycles for roundabouts
-    }
-    total_cycle_time = base_cycle_times.get(intersection_type, 100)
-
-    # Calculate weights based on intersection type
+    # Mumbai-specific cycle times based on intersection type
+    base_cycle_time = {
+        "Four-Way": 160,  # Typical Mumbai 4-way intersection cycle: 120-180 seconds
+        "T-Junction": 120,
+        "Diamond": 150,
+        "Roundabout": 130
+    }.get(intersection_type, 160)
+    
+    # Calculate average of current green and red times
+    avg_green_time = sum(given_green_times) / len(given_green_times)
+    avg_red_time = sum(given_red_times) / len(given_red_times)
+    
+    # Keep optimizations within realistic bounds - start with current values
+    optimized_green_times = given_green_times.copy()
+    optimized_red_times = given_red_times.copy()
+    
+    # Adjustment factors - smaller for more subtle optimization
+    green_adjustment_factor = 0.15  # Max 15% change
+    red_adjustment_factor = 0.12    # Max 12% change
+    
+    # Adjust for peak hours with Mumbai traffic patterns
+    is_peak_hour = (8 <= current_hour <= 11) or (18 <= current_hour <= 21)  # Updated peak hour definition
+    
+    # Calculate weights based on intersection type and traffic conditions
     if intersection_type == "T-Junction":
         # For T-Junction, give more weight to the main road (first two directions)
         weights = [0.4, 0.4, 0.2]
     elif intersection_type == "Four-Way":
-        # For Four-Way, balance all directions but give slightly more to busier directions
-        weights = [0.3, 0.3, 0.2, 0.2]
+        if is_peak_hour:
+            # During peak hours, favor main roads slightly more in Mumbai traffic
+            weights = [0.3, 0.3, 0.2, 0.2]
+        else:
+            weights = [0.28, 0.28, 0.22, 0.22]
     elif intersection_type == "Roundabout":
-        # For Roundabout, equal weights with slight variation
-        weights = [0.27, 0.27, 0.23, 0.23]
+        # For Roundabout, more balanced approach
+        weights = [0.26, 0.26, 0.24, 0.24]
     else:  # Diamond
         weights = [0.25, 0.25, 0.25, 0.25]
 
-    # Adjust weights based on traffic
-    if vehicle_count > 50:  # Heavy traffic
-        weights = [min(w * 1.2, 0.5) for w in weights]
-    elif vehicle_count > 30:  # Moderate traffic
-        weights = [w * 1.1 for w in weights]
-    else:  # Light traffic
-        weights = [w * 0.9 for w in weights]
+    # Apply optimization based on peak hour and traffic color
+    is_heavy_traffic_peak = is_peak_hour and color.lower() == "red"
+    
+    # Special case for heavy traffic during peak hours
+    if is_heavy_traffic_peak:
+        # Increase green times to 45-60 seconds range for peak hours with heavy traffic
+        for i in range(num_signals):
+            if i < 2:  # Main directions get more green time
+                optimized_green_times[i] = min(60, max(45, given_green_times[i] + 10))
+            else:  # Secondary directions
+                optimized_green_times[i] = min(55, max(45, given_green_times[i] + 5))
+            
+            # Round to nearest second
+            optimized_green_times[i] = round(optimized_green_times[i])
+        
+        # Calculate reduced red times for peak hours with heavy traffic (75-120 seconds)
+        for i in range(num_signals):
+            # Sum of all other directions' green times, plus reduced clearance times
+            other_greens_sum = sum(optimized_green_times) - optimized_green_times[i]
+            
+            # Calculate red time with reduced range
+            optimized_red_times[i] = other_greens_sum + (num_signals * 1.5)  # Reduced clearance
+            
+            # Ensure red times are within specified range (75-120 seconds)
+            optimized_red_times[i] = min(120, max(75, optimized_red_times[i]))
+            
+            # Round to nearest second
+            optimized_red_times[i] = round(optimized_red_times[i])
+            
+    else:
+        # Regular optimization for non-peak or non-heavy traffic conditions
+        for i in range(num_signals):
+            # Green time adjustments - typical Mumbai range: 30-45 seconds per direction
+            if color.lower() == "red" or (color.lower() == "yellow" and is_peak_hour):
+                # For congested traffic, increase green time slightly for main directions, decrease for others
+                if i < 2:  # Main directions
+                    adjustment = min(7, given_green_times[i] * green_adjustment_factor)
+                    optimized_green_times[i] = min(60, given_green_times[i] + adjustment)  # Cap at 60 seconds
+                else:
+                    adjustment = min(5, given_green_times[i] * green_adjustment_factor * 0.8)
+                    optimized_green_times[i] = max(25, given_green_times[i] - adjustment)  # Minimum 25 seconds
+            elif color.lower() == "green":
+                # For light traffic, slightly reduce cycle time overall
+                adjustment = min(5, given_green_times[i] * green_adjustment_factor * 0.7)
+                optimized_green_times[i] = max(25, given_green_times[i] - adjustment)
+            else:  # yellow normal hours
+                # Small balancing adjustments
+                if i < 2:  # Main directions
+                    adjustment = min(4, given_green_times[i] * green_adjustment_factor * 0.6)
+                    optimized_green_times[i] = min(50, given_green_times[i] + adjustment)
+                else:
+                    optimized_green_times[i] = max(25, given_green_times[i])
+            
+            # Round to nearest second
+            optimized_green_times[i] = round(optimized_green_times[i])
+        
+        # Calculate red times realistically - in Mumbai, red time per direction often 3x the green time
+        for i in range(num_signals):
+            # Sum of all other directions' green times, plus clearance times
+            other_greens_sum = sum(optimized_green_times) - optimized_green_times[i]
+            
+            # Mumbai traffic signals typically have red times around 90-135 seconds
+            # Based on cycle time minus this direction's green time, plus small clearance
+            optimized_red_times[i] = other_greens_sum + (num_signals * 2)  # Add 2 sec clearance per direction
+            
+            # Ensure red times remain in realistic range
+            optimized_red_times[i] = min(140, max(90, optimized_red_times[i]))  # Mumbai typical range
+            
+            # Round to nearest second
+            optimized_red_times[i] = round(optimized_red_times[i])
 
-    # Normalize weights
-    weight_sum = sum(weights)
-    normalized_weights = [w/weight_sum for w in weights]
-
-    # Calculate green times based on weights
-    available_green_time = total_cycle_time - (num_signals * 10)  # Reserve minimum red time
-    optimized_green_times = [max(10, round(available_green_time * w)) for w in normalized_weights]
-
-    # Calculate red times (minimum 10 seconds)
-    optimized_red_times = []
-    for i in range(num_signals):
-        # For roundabouts, use shorter red times
-        if intersection_type == "Roundabout":
-            red_time = max(5, min(30, round(optimized_green_times[i] * 0.5)))
-        else:
-            # Red time is based on the sum of other directions' green times
-            other_greens = sum(optimized_green_times[:i] + optimized_green_times[i+1:])
-            red_time = max(10, min(60, other_greens // (num_signals - 1)))
-        optimized_red_times.append(red_time)
-
-    # Calculate estimated delay
+    # Calculate estimated delay reduction - more conservative estimate
+    original_cycle_time = sum(given_green_times) + sum(given_red_times) / num_signals
+    optimized_cycle_time = sum(optimized_green_times) + sum(optimized_red_times) / num_signals
+    
+    # More realistic and modest delay reduction calculation
     delay_factor = {
-        "Four-Way": 1.0,
-        "T-Junction": 0.8,
-        "Diamond": 0.9,
-        "Roundabout": 0.7  # Roundabouts typically have less delay
-    }.get(intersection_type, 1.0)
-
-    estimated_delay_time = round(
-        (vehicle_count / 40) * 
-        (sum(optimized_red_times) / num_signals) * 
+        "Four-Way": 0.6,
+        "T-Junction": 0.5,
+        "Diamond": 0.55,
+        "Roundabout": 0.45
+    }.get(intersection_type, 0.5)  # More conservative factors
+    
+    # Calculate estimated delay reduction (in seconds)
+    estimated_delay_reduction = round(max(5, min(30, 
+        (vehicle_count / 60) * 
+        abs(original_cycle_time - optimized_cycle_time) * 
         delay_factor
-    )
+    )))
+    
+    # Calculate estimated travel time improvement - more realistic for Mumbai traffic
+    # Assumption: Average Mumbai trip encounters multiple signals
+    intersections_count = max(1, round(current_travel_time / 300))  # Estimate signal count
+    efficiency_factor = 0.4  # Conservative improvement factor (40% of theoretical maximum)
+    
+    # Calculate time saved - modest but meaningful
+    time_saved = min(current_travel_time * 0.2,  # Cap at 20% improvement
+                   estimated_delay_reduction * intersections_count * efficiency_factor)
+    
+    # Ensure optimized travel time is realistic (modest improvement)
+    optimized_travel_time = max(current_travel_time * 0.8, current_travel_time - time_saved)
 
-    return optimized_green_times, optimized_red_times, estimated_delay_time
+    return {
+        "optimized_green_times": optimized_green_times,
+        "optimized_red_times": optimized_red_times,
+        "estimated_delay_time": estimated_delay_reduction,
+        "intersection_type": intersection_type,
+        "optimized_travel_time": round(optimized_travel_time),
+        "time_saved": round(time_saved)
+    }
 
 class TrafficSignalOptimizer:
     def __init__(self, intersection_type, dataset):
@@ -121,23 +235,25 @@ class TrafficSignalOptimizer:
             hourly_traffic = day_data.groupby('Hour')['Total_Vehicles'].mean()
             threshold = np.percentile(hourly_traffic, 75)
             
+            # Update peak hours definition to match our target (8-11 AM, 6-9 PM)
             peak_hours_by_day[day] = {
-                'peak': hourly_traffic[hourly_traffic > threshold].index.tolist(),
-                'non_peak': hourly_traffic[hourly_traffic <= threshold].index.tolist()
+                'peak': [8, 9, 10, 11, 18, 19, 20, 21],
+                'non_peak': [h for h in range(24) if h not in [8, 9, 10, 11, 18, 19, 20, 21]]
             }
 
         return peak_hours_by_day
 
     def initialize_weights(self):
         """Initialize signal timing weights based on intersection type"""
+        # Mumbai-specific weights
         if self.intersection_type == "Four-Way":
-            return [0.3, 0.3, 0.2, 0.2]
+            return [0.28, 0.28, 0.22, 0.22]  # Balanced for Mumbai 4-way
         elif self.intersection_type == "T-Junction":
             return [0.4, 0.4, 0.2]  # More weight to main road
         elif self.intersection_type == "Diamond":
-            return [0.25, 0.25, 0.25, 0.25]
+            return [0.26, 0.26, 0.24, 0.24]
         elif self.intersection_type == "Roundabout":
-            return [0.27, 0.27, 0.23, 0.23]  # Slight variation for roundabouts
+            return [0.26, 0.26, 0.24, 0.24]
         else:
             return [0.25] * 4  # Default to equal weights
 
@@ -158,38 +274,116 @@ class TrafficSignalOptimizer:
                 if hour_data.empty:
                     continue
 
-                # Adjust cycle time based on peak hours and intersection type
-                if hour in day_peak_hours:
+                # Check if it's peak hour and get traffic density
+                is_peak_hour = hour in day_peak_hours
+                is_night_hour = hour >= 22 or hour <= 5
+                
+                # Get traffic density for this hour
+                total_vehicles = hour_data['Total_Vehicles'].mean()
+                
+                # Determine if this is heavy traffic (red) condition
+                # Higher threshold for peak vs non-peak
+                heavy_traffic_threshold = 60 if is_peak_hour else 50
+                is_heavy_traffic = total_vehicles > heavy_traffic_threshold
+                
+                # Special case for peak hours with heavy traffic
+                is_heavy_traffic_peak = is_peak_hour and is_heavy_traffic
+                
+                # Adjust cycle time based on Mumbai traffic patterns
+                if is_heavy_traffic_peak:
+                    # Special case for peak hours with heavy traffic
                     if self.intersection_type in ["Four-Way", "Diamond"]:
-                        cycle_time = 140
+                        cycle_time = 180  # Longer cycle for heavy peak traffic
                     elif self.intersection_type == "Roundabout":
-                        cycle_time = 110  # Slightly longer for peak
+                        cycle_time = 160
                     else:  # T-Junction
-                        cycle_time = 110
-                else:
+                        cycle_time = 150
+                elif is_peak_hour:
                     if self.intersection_type in ["Four-Way", "Diamond"]:
-                        cycle_time = 100
+                        cycle_time = 160  # Mumbai peak hour cycle
                     elif self.intersection_type == "Roundabout":
-                        cycle_time = 80  # Shorter for roundabouts
+                        cycle_time = 130
+                    else:  # T-Junction
+                        cycle_time = 120
+                elif is_night_hour:
+                    if self.intersection_type in ["Four-Way", "Diamond"]:
+                        cycle_time = 100  # Shorter cycles at night
+                    elif self.intersection_type == "Roundabout":
+                        cycle_time = 80
                     else:  # T-Junction
                         cycle_time = 80
+                else:
+                    if self.intersection_type in ["Four-Way", "Diamond"]:
+                        cycle_time = 140  # Regular hours
+                    elif self.intersection_type == "Roundabout":
+                        cycle_time = 110
+                    else:  # T-Junction
+                        cycle_time = 100
+
+                # Adjust weights based on time of day - Mumbai specific traffic patterns
+                time_adjusted_weights = self.adaptive_weights.copy()
+                if is_heavy_traffic_peak:
+                    # During peak hours with heavy traffic, strongly favor main roads
+                    if self.intersection_type == "Four-Way":
+                        time_adjusted_weights = [0.32, 0.32, 0.18, 0.18]
+                    elif self.intersection_type == "T-Junction":
+                        time_adjusted_weights = [0.45, 0.45, 0.1]
+                elif is_peak_hour:
+                    # During regular peak hours, favor main roads
+                    if self.intersection_type == "Four-Way":
+                        time_adjusted_weights = [0.3, 0.3, 0.2, 0.2]
+                    elif self.intersection_type == "T-Junction":
+                        time_adjusted_weights = [0.42, 0.42, 0.16]
+                elif is_night_hour:
+                    # More balanced at night
+                    if self.intersection_type == "Four-Way":
+                        time_adjusted_weights = [0.26, 0.26, 0.24, 0.24]
+                    elif self.intersection_type == "T-Junction":
+                        time_adjusted_weights = [0.36, 0.36, 0.28]
 
                 # Calculate green times
-                green_times = [max(10, round(w * (cycle_time - len(self.adaptive_weights) * 10)))
-                             for w in self.adaptive_weights]
+                green_times = []
+                
+                if is_heavy_traffic_peak:
+                    # For peak hours with heavy traffic, use our special case (45-60 sec)
+                    min_green_time = 45
+                    max_green_time = 60
+                    
+                    for i, w in enumerate(time_adjusted_weights):
+                        if i < 2:  # Main directions get higher values
+                            green_time = round(min_green_time + (max_green_time - min_green_time) * w * 1.5)
+                        else:  # Secondary directions
+                            green_time = round(min_green_time + (max_green_time - min_green_time) * w)
+                        green_times.append(max(min_green_time, min(max_green_time, green_time)))
+                else:
+                    # Regular calculation
+                    min_green_time = 25 if is_night_hour else 30
+                    max_green_time = 40 if is_night_hour else (50 if is_peak_hour else 45)
+                    
+                    for w in time_adjusted_weights:
+                        green_time = round(w * (cycle_time - (len(time_adjusted_weights) * 3)))
+                        green_times.append(max(min_green_time, min(max_green_time, green_time)))
                 
                 # Calculate red times
                 red_times = []
-                for i in range(len(self.adaptive_weights)):
-                    if self.intersection_type == "Roundabout":
-                        red_time = max(5, min(30, round(green_times[i] * 0.5)))
-                    else:
+                
+                if is_heavy_traffic_peak:
+                    # Use reduced red times for peak hours with heavy traffic (75-120 sec)
+                    min_red_time = 75
+                    max_red_time = 120
+                    
+                    for i in range(len(time_adjusted_weights)):
                         other_greens = sum(green_times[:i] + green_times[i+1:])
-                        red_time = max(10, min(60, other_greens // (len(self.adaptive_weights) - 1)))
-                    red_times.append(red_time)
+                        red_time = other_greens + (len(time_adjusted_weights) * 1.5)  # Reduced clearance
+                        red_times.append(max(min_red_time, min(max_red_time, red_time)))
+                else:
+                    # Regular calculation - Mumbai typical range (90-135 sec)
+                    for i in range(len(time_adjusted_weights)):
+                        other_greens = sum(green_times[:i] + green_times[i+1:])
+                        red_time = other_greens + (len(time_adjusted_weights) * 2)
+                        red_times.append(max(90, min(135, red_time)))
 
                 # Calculate metrics
-                total_vehicles = hour_data['Total_Vehicles'].mean()
                 avg_queue_length = round(total_vehicles * np.random.uniform(0.01, 0.05), 2)
                 avg_delay_time = round(total_vehicles * np.random.uniform(0.02, 0.06), 2)
 
@@ -201,7 +395,9 @@ class TrafficSignalOptimizer:
                     **{f"Signal_{i+1}_Red": red for i, red in enumerate(red_times)},
                     "Avg_Queue_Length": avg_queue_length,
                     "Avg_Delay_Time": avg_delay_time,
-                    "Total_Cycle_Time": sum(green_times) + sum(red_times)
+                    "Total_Cycle_Time": sum(green_times) + sum(red_times) // len(red_times),
+                    "Traffic_Density": "Heavy" if is_heavy_traffic else "Normal",
+                    "Time_Type": "Peak" if is_peak_hour else ("Night" if is_night_hour else "Regular")
                 }
                 optimized_data.append(data_row)
 
@@ -225,21 +421,20 @@ def optimize():
         given_green_times = data.get('green_times')
         given_red_times = data.get('red_times')
         intersection_type = data.get('intersection_type', 'Four-Way')
+        current_hour = data.get('current_hour', datetime.now().hour)
+        current_travel_time = data.get('current_travel_time', 0)
+        current_distance = data.get('current_distance', '0 km')
 
         if not color or not given_green_times or not given_red_times:
             return jsonify({"error": "Missing required parameters"}), 400
 
         try:
-            optimized_green_times, optimized_red_times, delay_time = calculate_optimized_timings(
-                color, given_green_times, given_red_times, intersection_type
+            result = calculate_optimized_timings(
+                color, given_green_times, given_red_times, intersection_type,
+                current_hour, current_travel_time, current_distance
             )
 
-            return jsonify({
-                "optimized_green_times": optimized_green_times,
-                "optimized_red_times": optimized_red_times,
-                "estimated_delay_time": delay_time,
-                "intersection_type": intersection_type
-            })
+            return jsonify(result)
         except ValueError as ve:
             return jsonify({"error": str(ve)}), 400
         except Exception as e:

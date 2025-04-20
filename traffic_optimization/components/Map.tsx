@@ -1,6 +1,6 @@
 "use client"; // Ensures this runs only on the client side
 
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   GoogleMap,
   LoadScript,
@@ -46,6 +46,7 @@ const Maps = () => {
   const [distanceInfo, setDistanceInfo] = useState<{
     distance: string;
     duration: string;
+    durationInSeconds: number;
   } | null>(null);
   const [currentTime, setCurrentTime] = useState("");
   const [optimizationResult, setOptimizationResult] = useState<{
@@ -53,12 +54,15 @@ const Maps = () => {
     optimized_red_times: number[];
     estimated_delay_time: number;
     intersection_type: string;
+    optimized_travel_time: number;
+    time_saved: number;
   } | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [optimizationError, setOptimizationError] = useState<string | null>(
     null
   );
-  const [trafficCondition, setTrafficCondition] = useState("red"); // New state for traffic condition
+  const [trafficCondition, setTrafficCondition] = useState("red");
+  const [currentHour, setCurrentHour] = useState(0);
 
   // Form state for intersection configuration
   const [intersectionType, setIntersectionType] = useState("fourway");
@@ -125,23 +129,67 @@ const Maps = () => {
       origin: origin,
       destination: destination,
       travelMode: google.maps.TravelMode.DRIVING,
+      provideRouteAlternatives: true,
+      drivingOptions: {
+        departureTime: new Date(),
+        trafficModel: google.maps.TrafficModel.BEST_GUESS,
+      },
     };
 
     directionsServiceRef.current.route(request, (result, status) => {
       if (status === google.maps.DirectionsStatus.OK) {
-        setDirections(result);
+        // Select the route with the shortest duration
+        if (!result || !result.routes) {
+          console.error("No routes found in the result.");
+          return;
+        }
+        const bestRoute = result.routes.reduce((prev, current) =>
+          (prev.legs[0]?.duration?.value ?? Infinity) <
+          (current.legs[0]?.duration?.value ?? Infinity)
+            ? prev
+            : current
+        );
+
+        setDirections({
+          ...result,
+          routes: [bestRoute], // Only keep the best route
+        });
 
         // Extract distance and duration information
-        const route = result?.routes[0];
+        const route = bestRoute;
         if (route && route.legs[0]) {
+          const durationInSeconds = route.legs[0].duration?.value || 0;
+
           setDistanceInfo({
-            distance: route?.legs?.[0]?.distance?.text || "",
-            duration: route.legs[0].duration?.text ?? "",
+            distance: route.legs[0].distance?.text || "",
+            duration: route.legs[0].duration?.text || "",
+            durationInSeconds: durationInSeconds,
           });
 
-          // Set current time
+          // Set current time and hour
           const now = new Date();
           setCurrentTime(now.toLocaleTimeString());
+          setCurrentHour(now.getHours());
+
+          // Determine traffic condition based on duration and distance
+          const distanceInKm =
+            parseFloat(
+              (route.legs[0].distance?.text || "").replace(" km", "")
+            ) ||
+            parseFloat(
+              (route.legs[0].distance?.text || "")
+                .replace(",", "")
+                .replace(" m", "")
+            ) / 1000;
+          const speed = distanceInKm / (durationInSeconds / 3600);
+
+          if (speed < 20) {
+            setTrafficCondition("red");
+          } else if (speed < 40) {
+            setTrafficCondition("yellow");
+          } else {
+            setTrafficCondition("green");
+          }
 
           // Open the drawer with the information
           setIsDrawerOpen(true);
@@ -179,7 +227,7 @@ const Maps = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          color: trafficCondition, // Now using the selected traffic condition
+          color: trafficCondition,
           green_times: greenTimesArray,
           red_times: redTimesArray,
           intersection_type:
@@ -190,6 +238,9 @@ const Maps = () => {
               : intersectionType === "diamond"
               ? "Diamond"
               : "Roundabout",
+          current_hour: currentHour,
+          current_travel_time: distanceInfo.durationInSeconds,
+          current_distance: distanceInfo.distance,
         }),
       });
 
@@ -233,11 +284,57 @@ const Maps = () => {
     setOptimizationError(null);
   };
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${mins > 0 ? `${mins} min ` : ""}${
+      secs > 0 ? `${secs} sec` : ""
+    }`.trim();
+  };
+
+  const parseDurationToSeconds = (duration: string): number => {
+    // Handle formats like "1 hour 15 mins" or "45 mins" or "30 secs"
+    let totalSeconds = 0;
+
+    // Extract hours
+    const hourMatch = duration.match(/(\d+)\s*hour/);
+    if (hourMatch) {
+      totalSeconds += parseInt(hourMatch[1]) * 3600;
+    }
+
+    // Extract minutes
+    const minMatch = duration.match(/(\d+)\s*min/);
+    if (minMatch) {
+      totalSeconds += parseInt(minMatch[1]) * 60;
+    }
+
+    // Extract seconds
+    const secMatch = duration.match(/(\d+)\s*sec/);
+    if (secMatch) {
+      totalSeconds += parseInt(secMatch[1]);
+    }
+
+    return totalSeconds;
+  };
+
+  const calculateTimeSaved = () => {
+    if (!distanceInfo || !optimizationResult) return "No time saved";
+
+    // Parse current duration to seconds
+    const currentSeconds = parseDurationToSeconds(distanceInfo.duration);
+    const optimizedSeconds = optimizationResult.optimized_travel_time;
+
+    if (currentSeconds <= optimizedSeconds) return "No time saved";
+
+    const savedSeconds = currentSeconds - optimizedSeconds;
+    return formatTime(savedSeconds);
+  };
+
   return (
     <div className="container mx-auto p-4">
       <div className="mb-4">
         <Button onClick={resetSelections} variant="outline">
-          Reset Selections
+          Clear Selection
         </Button>
       </div>
 
@@ -267,15 +364,15 @@ const Maps = () => {
       </LoadScript>
 
       <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
-        <DrawerContent>
-          <DrawerHeader>
+        <DrawerContent className="max-h-[90vh]">
+          <DrawerHeader className="sticky top-0 bg-background z-10">
             <DrawerTitle>Intersection Configuration</DrawerTitle>
             <DrawerDescription>
               Configure traffic signal timings for the selected intersections
             </DrawerDescription>
           </DrawerHeader>
 
-          <div className="p-4">
+          <div className="p-4 overflow-y-auto">
             {distanceInfo && (
               <div className="mb-6 space-y-2">
                 <div className="flex justify-between">
@@ -283,20 +380,21 @@ const Maps = () => {
                   <span>{distanceInfo.distance}</span>
                 </div>
                 <div className="flex justify-between">
-                  <Badge variant="outline">Estimated Travel Time</Badge>
-                  <span>{distanceInfo.duration}</span>
-                </div>
-                <div className="flex justify-between">
                   <Badge variant="outline">Current Time</Badge>
                   <span>{currentTime}</span>
+                </div>
+                <div className="flex justify-between">
+                  <Badge variant="outline">Current Estimated Travel Time</Badge>
+                  <span>{distanceInfo.duration}</span>
                 </div>
               </div>
             )}
 
             <div className="space-y-6">
-              {/* Traffic Condition Selector - New Addition */}
               <div className="space-y-2">
-                <h3 className="font-medium">Traffic Condition</h3>
+                <h3 className="font-medium">
+                  Traffic Condition (Auto-detected)
+                </h3>
                 <RadioGroup
                   value={trafficCondition}
                   onValueChange={setTrafficCondition}
@@ -478,27 +576,53 @@ const Maps = () => {
             </div>
 
             {optimizationResult && (
-              <div className="mt-6 space-y-2">
-                <h3 className="font-medium">Optimization Result</h3>
-                <div className="flex justify-between">
-                  <Badge variant="secondary">Optimized Green Timings</Badge>
-                  <span>
-                    {optimizationResult.optimized_green_times.join(", ")} s
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <Badge variant="secondary">Optimized Red Timings</Badge>
-                  <span>
-                    {optimizationResult.optimized_red_times.join(", ")} s
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <Badge variant="secondary">Estimated Delay</Badge>
-                  <span>{optimizationResult.estimated_delay_time} s</span>
-                </div>
-                <div className="flex justify-between">
-                  <Badge variant="secondary">Intersection Type</Badge>
-                  <span>{optimizationResult.intersection_type}</span>
+              <div className="mt-8 space-y-4 p-4 bg-gray-50 rounded-lg">
+                <h3 className="text-lg font-semibold">Optimization Results</h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-3">
+                    <div className="flex justify-between">
+                      <span className="font-medium">
+                        Optimized Green Timings:
+                      </span>
+                      <span className="font-mono">
+                        {optimizationResult.optimized_green_times.join(", ")} s
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">
+                        Optimized Red Timings:
+                      </span>
+                      <span className="font-mono">
+                        {optimizationResult.optimized_red_times.join(", ")} s
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Intersection Type:</span>
+                      <span>{optimizationResult.intersection_type}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex justify-between">
+                      <span className="font-medium">Current Travel Time:</span>
+                      <span>{distanceInfo?.duration}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">
+                        Optimized Travel Time:
+                      </span>
+                      <span>
+                        {formatTime(optimizationResult.optimized_travel_time)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Time Saved:</span>
+                      <span className="text-green-600 font-semibold">
+                        {calculateTimeSaved()}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -511,22 +635,27 @@ const Maps = () => {
             )}
           </div>
 
-          <DrawerFooter>
-            <Button
-              onClick={handleOptimizeIntersection}
-              disabled={isOptimizing}
-            >
-              {isOptimizing ? (
-                <>
-                  Optimizing <Loader2 className="ml-2 h-4 w-4 animate-spin" />
-                </>
-              ) : (
-                "Optimize Timings"
-              )}
-            </Button>
-            <DrawerClose asChild>
-              <Button variant="outline">Cancel</Button>
-            </DrawerClose>
+          <DrawerFooter className="sticky bottom-0 bg-background border-t">
+            <div className="flex gap-2 w-full">
+              <Button
+                onClick={handleOptimizeIntersection}
+                disabled={isOptimizing}
+                className="flex-1"
+              >
+                {isOptimizing ? (
+                  <>
+                    Optimizing <Loader2 className="ml-2 h-4 w-4 animate-spin" />
+                  </>
+                ) : (
+                  "Optimize Timings"
+                )}
+              </Button>
+              <DrawerClose asChild>
+                <Button variant="outline" className="flex-1">
+                  Cancel
+                </Button>
+              </DrawerClose>
+            </div>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
