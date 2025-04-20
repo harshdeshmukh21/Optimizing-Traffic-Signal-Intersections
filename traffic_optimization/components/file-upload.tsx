@@ -17,6 +17,10 @@ interface CSVData {
 }
 
 interface OptimizedResult {
+  Signal_5_Green: string;
+  Signal_5_Red: string;
+  Signal_6_Green: string;
+  Signal_6_Red: string;
   Day: string;
   Hour: number;
   Total_Vehicles: number;
@@ -38,6 +42,9 @@ interface OptimizedResult {
   Signal_3_Red: number;
   Signal_4_Green?: number;
   Signal_4_Red?: number;
+  Cycle_Length?: number;
+  Original_Queue_Length?: number;
+  Original_Delay_Time?: number;
 }
 
 const intersectionTypes = [
@@ -52,9 +59,9 @@ const intersectionTypes = [
     signals: 3,
   },
   {
-    type: "Diamond Intersection",
+    type: "Diamond",
     description: "Bridge and a ramp highway",
-    signals: 4,
+    signals: 6,
   },
   {
     type: "Roundabout",
@@ -100,6 +107,10 @@ export default function TrafficFileUpload({
   const [currentDayIndex, setCurrentDayIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [optimizationMessage, setOptimizationMessage] = useState<string>("");
+  const [showPrediction, setShowPrediction] = useState<boolean>(false);
+  const [predictionResults, setPredictionResults] = useState<
+    OptimizedResult[] | null
+  >(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const parseCSV = (text: string): CSVData => {
@@ -114,6 +125,8 @@ export default function TrafficFileUpload({
   const handleFileChange = (newFiles: File[]) => {
     setFiles((prevFiles) => [...prevFiles, ...newFiles]);
     setOptimizedResults(null);
+    setPredictionResults(null);
+    setShowPrediction(false);
     onChange && onChange(newFiles);
   };
 
@@ -121,113 +134,65 @@ export default function TrafficFileUpload({
     fileInputRef.current?.click();
   };
 
-  const handleUpload = async () => {
+  const handleUpload = async (predict: boolean = false) => {
     if (files.length === 0) return;
 
     setIsLoading(true);
-    setOptimizationMessage("Processing data...");
+    setOptimizationMessage(
+      predict ? "Predicting traffic patterns..." : "Processing data..."
+    );
 
     try {
       const formData = new FormData();
       formData.append("file", files[0]);
       formData.append("intersection_type", selectedIntersection);
 
+      const endpoint = predict ? "/predict" : "/optimize";
       const response = await axios.post(
-        "http://127.0.0.1:5000/optimize",
+        `http://localhost:5002${endpoint}`,
         formData,
         {
           headers: { "Content-Type": "multipart/form-data" },
+          responseType: "blob",
         }
       );
 
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(response.data?.message || "Optimization failed");
-      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        const { headers, rows } = parseCSV(text);
 
-      const responseData = response.data;
-
-      if (responseData.status === "success" && responseData.data) {
-        const formattedResults = responseData.data.map((item: any) => {
-          const result: OptimizedResult = {
-            Day: item.Day || "Monday",
-            Hour: item.Hour || 0,
-            Total_Vehicles: item.Total_Vehicles || 0,
-            Signal_1_Vehicles: item.Signal_1_Vehicles || 0,
-            Signal_2_Vehicles: item.Signal_2_Vehicles || 0,
-            Signal_3_Vehicles: item.Signal_3_Vehicles || 0,
-            Signal_1_Timings: item.Signal_1_Timings || 0,
-            Signal_2_Timings: item.Signal_2_Timings || 0,
-            Signal_3_Timings: item.Signal_3_Timings || 0,
-            Avg_Queue_Length: item.Avg_Queue_Length || 0,
-            Avg_Delay_Time: item.Avg_Delay_Time || 0,
-            Signal_1_Green: item.Signal_1_Green || 0,
-            Signal_1_Red: item.Signal_1_Red || 0,
-            Signal_2_Green: item.Signal_2_Green || 0,
-            Signal_2_Red: item.Signal_2_Red || 0,
-            Signal_3_Green: item.Signal_3_Green || 0,
-            Signal_3_Red: item.Signal_3_Red || 0,
-          };
-
-          if (selectedIntersection !== "T-Junction") {
-            result.Signal_4_Vehicles = item.Signal_4_Vehicles || 0;
-            result.Signal_4_Timings = item.Signal_4_Timings || 0;
-            result.Signal_4_Green = item.Signal_4_Green || 0;
-            result.Signal_4_Red = item.Signal_4_Red || 0;
-          }
-
-          return result;
+        const results = rows.map((row) => {
+          const result: any = {};
+          headers.forEach((header, index) => {
+            const value = row[index];
+            result[header] = isNaN(Number(value)) ? value : Number(value);
+          });
+          return result as OptimizedResult;
         });
 
-        setOptimizedResults(formattedResults);
-        setOptimizationMessage("Optimization complete!");
+        if (predict) {
+          setPredictionResults(results);
+          setShowPrediction(true);
+        } else {
+          setOptimizedResults(results);
+        }
 
-        // Generate CSV for download
-        const headers = [
-          "Day",
-          "Hour",
-          "Total_Vehicles",
-          "Signal_1_Vehicles",
-          "Signal_2_Vehicles",
-          "Signal_3_Vehicles",
-          ...(selectedIntersection !== "T-Junction"
-            ? ["Signal_4_Vehicles"]
-            : []),
-          "Signal_1_Timings",
-          "Signal_2_Timings",
-          "Signal_3_Timings",
-          ...(selectedIntersection !== "T-Junction"
-            ? ["Signal_4_Timings"]
-            : []),
-          "Avg_Queue_Length",
-          "Avg_Delay_Time",
-          "Signal_1_Green",
-          "Signal_1_Red",
-          "Signal_2_Green",
-          "Signal_2_Red",
-          "Signal_3_Green",
-          "Signal_3_Red",
-          ...(selectedIntersection !== "T-Junction"
-            ? ["Signal_4_Green", "Signal_4_Red"]
-            : []),
-        ];
-
-        const csvContent = [
-          headers.join(","),
-          ...formattedResults.map((result: any) =>
-            headers
-              .map((header) => result[header as keyof OptimizedResult] || "")
-              .join(",")
-          ),
-        ].join("\n");
-
-        const blob = new Blob([csvContent], { type: "text/csv" });
+        const blob = new Blob([text], { type: "text/csv" });
         setDownloadLink(URL.createObjectURL(blob));
-      } else {
-        throw new Error(responseData.message || "Optimization failed");
-      }
+      };
+      reader.readAsText(response.data);
+
+      setOptimizationMessage(
+        predict ? "Prediction complete!" : "Optimization complete!"
+      );
     } catch (error: any) {
       console.error("Error processing file:", error);
-      setOptimizationMessage(`Error: ${error.message || "Unknown error"}`);
+      setOptimizationMessage(
+        `Error: ${
+          error.response?.data?.message || error.message || "Unknown error"
+        }`
+      );
     } finally {
       setIsLoading(false);
     }
@@ -238,7 +203,9 @@ export default function TrafficFileUpload({
       if (downloadLink) {
         const a = document.createElement("a");
         a.href = downloadLink;
-        a.download = "optimized_traffic_data.csv";
+        a.download = showPrediction
+          ? "predicted_optimized_traffic_data.csv"
+          : "optimized_traffic_data.csv";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -254,6 +221,8 @@ export default function TrafficFileUpload({
   const handleRemoveDataset = () => {
     setFiles([]);
     setOptimizedResults(null);
+    setPredictionResults(null);
+    setShowPrediction(false);
     setDownloadLink(null);
     setOptimizationMessage("");
   };
@@ -279,17 +248,27 @@ export default function TrafficFileUpload({
     );
   };
 
-  const renderResultsTable = () => {
-    if (!optimizedResults) return null;
+  const renderResultsTable = (
+    results: OptimizedResult[] | null,
+    isPrediction: boolean = false
+  ) => {
+    if (!results) return null;
 
-    const filteredResults = optimizedResults.filter(
+    const filteredResults = results.filter(
       (result) => result.Day === selectedDay
     );
+
+    const signalCount =
+      selectedIntersection === "T-Junction"
+        ? 3
+        : selectedIntersection === "Diamond"
+        ? 6
+        : 4;
 
     return (
       <div className="mt-8">
         <h3 className="text-lg font-semibold mb-4 text-center">
-          Optimized Results for {selectedDay}
+          {isPrediction ? "Predicted" : "Optimized"} Results for {selectedDay}
         </h3>
         <div className="overflow-x-auto">
           <table className="min-w-full bg-white dark:bg-neutral-800 rounded-lg overflow-hidden">
@@ -301,26 +280,19 @@ export default function TrafficFileUpload({
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                   Total Vehicles
                 </th>
-                {[1, 2, 3].map((signal) => (
-                  <React.Fragment key={signal}>
+                {Array.from({ length: signalCount }).map((_, i) => (
+                  <React.Fragment key={i}>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                      Signal {signal} Green
+                      Signal {i + 1} Green
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                      Signal {signal} Red
+                      Signal {i + 1} Red
                     </th>
                   </React.Fragment>
                 ))}
-                {selectedIntersection !== "T-Junction" && (
-                  <>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                      Signal 4 Green
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                      Signal 4 Red
-                    </th>
-                  </>
-                )}
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Cycle Length
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                   Avg Queue
                 </th>
@@ -356,7 +328,7 @@ export default function TrafficFileUpload({
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     {result.Signal_3_Red}
                   </td>
-                  {selectedIntersection !== "T-Junction" && (
+                  {signalCount > 3 && (
                     <>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {result.Signal_4_Green || "N/A"}
@@ -366,11 +338,30 @@ export default function TrafficFileUpload({
                       </td>
                     </>
                   )}
+                  {signalCount > 4 && (
+                    <>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {result.Signal_5_Green || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {result.Signal_5_Red || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {result.Signal_6_Green || "N/A"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {result.Signal_6_Red || "N/A"}
+                      </td>
+                    </>
+                  )}
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {result.Avg_Queue_Length.toFixed(2)}
+                    {result.Cycle_Length || "N/A"}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {result.Avg_Delay_Time.toFixed(2)}
+                    {result.Avg_Queue_Length?.toFixed(2) || "N/A"}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {result.Avg_Delay_Time?.toFixed(2) || "N/A"}
                   </td>
                 </tr>
               ))}
@@ -410,7 +401,11 @@ export default function TrafficFileUpload({
                   ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
                   : "border-gray-200 dark:border-neutral-700 hover:border-blue-300 dark:hover:border-blue-700"
               }`}
-              onClick={() => setSelectedIntersection(intersection.type)}
+              onClick={() => {
+                setSelectedIntersection(intersection.type);
+                setOptimizedResults(null);
+                setPredictionResults(null);
+              }}
             >
               <div className="flex items-center space-x-2">
                 <div
@@ -427,7 +422,7 @@ export default function TrafficFileUpload({
                 <h3 className="font-medium">{intersection.type}</h3>
               </div>
               <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 ml-6">
-                {intersection.description}
+                {intersection.description} ({intersection.signals} signals)
               </p>
             </div>
           ))}
@@ -476,10 +471,10 @@ export default function TrafficFileUpload({
           </div>
         </motion.div>
 
-        {files.length > 0 && !optimizedResults && (
-          <div className="flex flex-col items-center mt-4">
+        {files.length > 0 && !optimizedResults && !predictionResults && (
+          <div className="flex flex-col items-center mt-4 space-y-4">
             <button
-              onClick={handleUpload}
+              onClick={() => handleUpload(false)}
               disabled={isLoading}
               className="px-8 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2 disabled:opacity-50"
             >
@@ -495,6 +490,23 @@ export default function TrafficFileUpload({
                 </>
               )}
             </button>
+            <button
+              onClick={() => handleUpload(true)}
+              disabled={isLoading}
+              className="px-8 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2 disabled:opacity-50"
+            >
+              {isLoading ? (
+                <>
+                  <IconLoader2 className="animate-spin" size={18} />
+                  <span>Predicting...</span>
+                </>
+              ) : (
+                <>
+                  Predict Next Week
+                  <span className="h-4 w-4 ml-2">🔮</span>
+                </>
+              )}
+            </button>
             {optimizationMessage && (
               <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
                 {optimizationMessage}
@@ -503,16 +515,19 @@ export default function TrafficFileUpload({
           </div>
         )}
 
-        {optimizedResults && renderResultsTable()}
+        {optimizedResults && renderResultsTable(optimizedResults)}
+        {showPrediction &&
+          predictionResults &&
+          renderResultsTable(predictionResults, true)}
 
-        {downloadLink && (
+        {(optimizedResults || predictionResults) && (
           <div className="flex justify-center mt-8 space-x-4">
             <button
               onClick={handleDownload}
               className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
             >
               <span className="h-4 w-4">↓</span>
-              Download Full Results
+              Download {showPrediction ? "Predicted" : "Optimized"} Results
             </button>
             <button
               onClick={() => router.push("/visualizer")}
@@ -521,6 +536,18 @@ export default function TrafficFileUpload({
               <span className="h-4 w-4">📊</span>
               Visualize Data
             </button>
+            {showPrediction && (
+              <button
+                onClick={() => {
+                  setShowPrediction(false);
+                  setPredictionResults(null);
+                }}
+                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
+              >
+                <span className="h-4 w-4">←</span>
+                Show Optimized Data
+              </button>
+            )}
             <button
               onClick={handleRemoveDataset}
               className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors duration-200 flex items-center gap-2"
